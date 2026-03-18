@@ -1,0 +1,64 @@
+{
+  "scan_metadata": {
+    "scan_date": "2026-03-18T12:44:17.725450+00:00",
+    "waingro_version": "0.1.0",
+    "rule_count": 28,
+    "corpus_source": "openclaw/skills (github archive)",
+    "total_skills_scanned": 30037,
+    "parse_errors": 17,
+    "scan_duration_seconds": 354.8,
+    "workers": 4
+  },
+  "aggregate": {
+    "clean_skills": 71,
+    "flagged_skills": 29966,
+    "flagged_percentage": 99.76,
+    "total_findings": 263693,
+    "findings_by_severity": {
+      "medium": 179823,
+      "high": 78873,
+      "critical": 4997
+    },
+    "findings_by_rule_id": {
+      "OBFUSC-001": 175370,
+      "EXFIL-001": 41796,
+      "SOCIAL-001": 15203,
+      "EXFIL-004": 12119,
+      "PERSIST-004": 3464,
+      "EXEC-003": 3284,
+      "PERSIST-001": 2626,
+      "EXEC-002": 1621,
+      "NET-003": 1414,
+      "EXEC-005": 1378,
+      "EXEC-001": 1331,
+      "OBFUSC-002": 989,
+      "PERSIST-003": 841,
+      "PERSIST-002": 801,
+      "INJECT-001": 357,
+      "SOCIAL-003": 209,
+      "NET-004": 206,
+      "EXFIL-006": 205,
+      "EXFIL-007": 158,
+      "EXFIL-002": 109,
+      "NET-001": 63,
+      "EXFIL-003": 35,
+      "INJECT-002": 31,
+      "NET-002": 29,
+      "EXFIL-005": 22,
+      "EXEC-004": 17,
+      "TYPO-001": 8,
+      "SOCIAL-002": 4,
+      "INJECT-003": 3
+    },
+    "findings_by_category": {
+      "obfuscation": 176359,
+      "exfiltration": 54444,
+      "social-engineering": 15416,
+      "persistence": 7732,
+      "execution": 7631,
+      "network": 1712,
+      "injection": 391,
+      "typosquatting": 8
+    }
+  }
+}
