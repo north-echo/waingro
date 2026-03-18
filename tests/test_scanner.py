@@ -61,3 +61,35 @@ def test_audit_malicious_dir():
     assert len(results) >= 5
     verdicts = {r.verdict for r in results}
     assert "MALICIOUS" in verdicts or "SUSPICIOUS" in verdicts
+
+
+# --- Bundled content integration tests ---
+
+CORPUS_DIR = FIXTURES_DIR / "skills"
+
+
+def test_scan_c2_beacon_bundled():
+    """c2-beacon: eval in monitor.sh detected through full pipeline."""
+    result = scan_skill(CORPUS_DIR / "clawhavoc" / "c2-beacon")
+    assert result.verdict != "CLEAN"
+    assert result.files_scanned >= 2
+    rule_ids = {f.rule_id for f in result.findings}
+    assert "EXEC-003" in rule_ids  # eval "$RESP" in monitor.sh
+
+
+def test_scan_npm_preinstall_hook_bundled():
+    """npm-preinstall-hook: hooks in package.json detected through full pipeline."""
+    result = scan_skill(CORPUS_DIR / "supply-chain" / "npm-preinstall-hook")
+    assert result.verdict != "CLEAN"
+    assert result.files_scanned >= 2
+    rule_ids = {f.rule_id for f in result.findings}
+    assert "SOCIAL-003" in rule_ids or "EXEC-001" in rule_ids
+
+
+def test_scan_dns_exfil_bundled():
+    """dns-exfil: dig in dns_test.sh detected through full pipeline."""
+    result = scan_skill(CORPUS_DIR / "data-exfiltration" / "dns-exfil")
+    assert result.verdict != "CLEAN"
+    assert result.files_scanned >= 2
+    rule_ids = {f.rule_id for f in result.findings}
+    assert "NET-004" in rule_ids
