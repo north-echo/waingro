@@ -1,36 +1,11 @@
 """Execution rules: detect remote code execution patterns."""
 
 import re
-from pathlib import Path
 
 from waingro.models import Finding, FindingCategory, ParsedSkill, Severity
-from waingro.rules import Rule, register_rule
+from waingro.rules import Rule, register_rule, search_skill_content
 
 CLAWHAVOC_REF = "ClawHavoc campaign (Bitdefender, Feb 2026)"
-
-
-def _search_content(
-    skill: ParsedSkill, patterns: list[re.Pattern],
-) -> list[tuple[str, int | None, Path]]:
-    """Search body and code blocks for pattern matches. Returns (match, line, file)."""
-    hits = []
-    body_lines = skill.body.split("\n")
-    skill_md = skill.path / "SKILL.md"
-
-    for i, line in enumerate(body_lines, start=1):
-        for pat in patterns:
-            m = pat.search(line)
-            if m:
-                hits.append((m.group(0), i, skill_md))
-
-    for block in skill.code_blocks:
-        for j, line in enumerate(block["content"].split("\n")):
-            for pat in patterns:
-                m = pat.search(line)
-                if m:
-                    hits.append((m.group(0), block["line"] + j, skill_md))
-
-    return hits
 
 
 @register_rule
@@ -48,7 +23,7 @@ class CurlPipeShell(Rule):
 
     def evaluate(self, skill: ParsedSkill) -> list[Finding]:
         findings = []
-        for matched, line, fpath in _search_content(skill, self._patterns):
+        for matched, line, fpath in search_skill_content(skill, self._patterns):
             findings.append(Finding(
                 rule_id=self.rule_id,
                 title=self.title,
@@ -82,7 +57,7 @@ class Base64Execution(Rule):
 
     def evaluate(self, skill: ParsedSkill) -> list[Finding]:
         findings = []
-        for matched, line, fpath in _search_content(skill, self._patterns):
+        for matched, line, fpath in search_skill_content(skill, self._patterns):
             findings.append(Finding(
                 rule_id=self.rule_id,
                 title=self.title,
@@ -106,6 +81,8 @@ class EvalExec(Rule):
 
     _patterns = [
         re.compile(r"\beval\s*\("),
+        re.compile(r'\beval\s+"\$'),
+        re.compile(r"\beval\s+\$"),
         re.compile(r"\bexec\s*\("),
         re.compile(r"os\.system\s*\("),
         re.compile(r"subprocess\.(call|run|Popen)\s*\([^)]*shell\s*=\s*True"),
@@ -113,7 +90,7 @@ class EvalExec(Rule):
 
     def evaluate(self, skill: ParsedSkill) -> list[Finding]:
         findings = []
-        for matched, line, fpath in _search_content(skill, self._patterns):
+        for matched, line, fpath in search_skill_content(skill, self._patterns):
             findings.append(Finding(
                 rule_id=self.rule_id,
                 title=self.title,
@@ -145,7 +122,7 @@ class PowerShellCradle(Rule):
 
     def evaluate(self, skill: ParsedSkill) -> list[Finding]:
         findings = []
-        for matched, line, fpath in _search_content(skill, self._patterns):
+        for matched, line, fpath in search_skill_content(skill, self._patterns):
             findings.append(Finding(
                 rule_id=self.rule_id,
                 title=self.title,
@@ -156,6 +133,37 @@ class PowerShellCradle(Rule):
                 line_number=line,
                 matched_content=matched[:200],
                 remediation="Do not execute PowerShell download cradles from untrusted sources.",
+                reference=None,
+            ))
+        return findings
+
+
+@register_rule
+class HexEncodedExecution(Rule):
+    rule_id = "EXEC-005"
+    title = "Hex-encoded command execution"
+    description = "Detects hex-decoded content used to construct and execute commands"
+
+    _patterns = [
+        re.compile(r"bytes\.fromhex\s*\("),
+        re.compile(r"xxd\s+-r\s+-p"),
+        re.compile(r"echo\s+[\"'][0-9a-fA-F]+[\"']\s*\|\s*xxd\s+-r"),
+        re.compile(r"\\x[0-9a-fA-F]{2}.*\\x[0-9a-fA-F]{2}"),
+    ]
+
+    def evaluate(self, skill: ParsedSkill) -> list[Finding]:
+        findings = []
+        for matched, line, fpath in search_skill_content(skill, self._patterns):
+            findings.append(Finding(
+                rule_id=self.rule_id,
+                title=self.title,
+                description=self.description,
+                severity=Severity.CRITICAL,
+                category=FindingCategory.EXECUTION,
+                file_path=fpath,
+                line_number=line,
+                matched_content=matched[:200],
+                remediation="Decode and inspect hex-encoded content before execution.",
                 reference=None,
             ))
         return findings

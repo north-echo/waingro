@@ -4,7 +4,7 @@ from pathlib import Path
 
 from waingro.analyzers.static import run_static_analysis
 from waingro.analyzers.typosquat import check_typosquat, load_known_good_skills
-from waingro.models import ScanResult
+from waingro.models import BundledFileContent, ScanResult
 from waingro.parsers.script import read_script
 from waingro.parsers.skill import parse_skill
 
@@ -17,10 +17,11 @@ def scan_skill(path: Path, known_good_path: Path | None = None) -> ScanResult:
     """Scan a single skill directory or SKILL.md file."""
     skill = parse_skill(path)
 
-    # Count files scanned
+    # Read bundled files and make content available for analysis
     files_scanned = 1  # SKILL.md
     for bf in skill.bundled_files:
-        _ = read_script(bf)
+        content = read_script(bf)
+        skill.bundled_content.append(BundledFileContent(path=bf, content=content))
         files_scanned += 1
 
     # Static analysis

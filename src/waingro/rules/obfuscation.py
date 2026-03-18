@@ -1,33 +1,9 @@
 """Obfuscation rules: detect encoding and string tricks to hide malicious intent."""
 
 import re
-from pathlib import Path
 
 from waingro.models import Finding, FindingCategory, ParsedSkill, Severity
-from waingro.rules import Rule, register_rule
-
-
-def _search_body_and_blocks(
-    skill: ParsedSkill, patterns: list[re.Pattern],
-) -> list[tuple[str, int | None, Path]]:
-    hits = []
-    body_lines = skill.body.split("\n")
-    skill_md = skill.path / "SKILL.md"
-
-    for i, line in enumerate(body_lines, start=1):
-        for pat in patterns:
-            m = pat.search(line)
-            if m:
-                hits.append((m.group(0), i, skill_md))
-
-    for block in skill.code_blocks:
-        for j, line in enumerate(block["content"].split("\n")):
-            for pat in patterns:
-                m = pat.search(line)
-                if m:
-                    hits.append((m.group(0), block["line"] + j, skill_md))
-
-    return hits
+from waingro.rules import Rule, register_rule, search_skill_content
 
 
 @register_rule
@@ -42,7 +18,7 @@ class Base64Strings(Rule):
 
     def evaluate(self, skill: ParsedSkill) -> list[Finding]:
         findings = []
-        for matched, line, fpath in _search_body_and_blocks(skill, self._patterns):
+        for matched, line, fpath in search_skill_content(skill, self._patterns):
             findings.append(Finding(
                 rule_id=self.rule_id,
                 title=self.title,
@@ -65,13 +41,17 @@ class StringConcatenation(Rule):
     description = "Detects variable concatenation patterns used to evade detection"
 
     _patterns = [
+        re.compile(r'\$\{[A-Z_]+\}\$\{[A-Z_]+\}'),
         re.compile(r'\$[a-zA-Z_]+\$[a-zA-Z_]+\$[a-zA-Z_]+'),
         re.compile(r"['\"][a-z]{1,4}['\"]\s*\+\s*['\"][a-z]{1,4}['\"]\s*\+\s*['\"]"),
+        re.compile(r"chr\(\d+\)\s*\+\s*chr\(\d+\)"),
+        re.compile(r'\$\(\s*echo\s+\w+\s*\)'),
+        re.compile(r"__import__\s*\(\s*['\"].*['\"]\s*\.\s*join"),
     ]
 
     def evaluate(self, skill: ParsedSkill) -> list[Finding]:
         findings = []
-        for matched, line, fpath in _search_body_and_blocks(skill, self._patterns):
+        for matched, line, fpath in search_skill_content(skill, self._patterns):
             findings.append(Finding(
                 rule_id=self.rule_id,
                 title=self.title,

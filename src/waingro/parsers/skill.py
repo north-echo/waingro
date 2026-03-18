@@ -9,7 +9,7 @@ from waingro.models import ParsedSkill, SkillMetadata
 
 FRONTMATTER_RE = re.compile(r"^---\s*\n(.*?)\n---\s*\n", re.DOTALL)
 CODE_BLOCK_RE = re.compile(r"^```(\w*)\n(.*?)^```", re.MULTILINE | re.DOTALL)
-BUNDLED_EXTENSIONS = {".sh", ".py", ".js"}
+BUNDLED_EXTENSIONS = {".sh", ".py", ".js", ".json"}
 
 
 def parse_frontmatter(content: str) -> tuple[dict, str]:
@@ -55,12 +55,12 @@ def extract_code_blocks(content: str, start_line_offset: int = 0) -> list[dict]:
 
 
 def discover_bundled_files(skill_dir: Path) -> list[Path]:
-    """Find .sh, .py, .js files in the skill directory."""
+    """Find .sh, .py, .js, .json files in the skill directory (recursive)."""
     files = []
     if not skill_dir.is_dir():
         return files
     for ext in sorted(BUNDLED_EXTENSIONS):
-        files.extend(sorted(skill_dir.glob(f"*{ext}")))
+        files.extend(sorted(skill_dir.rglob(f"*{ext}")))
     return files
 
 

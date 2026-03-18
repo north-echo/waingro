@@ -50,12 +50,20 @@ class SkillMetadata:
 
 
 @dataclass
+class BundledFileContent:
+    """Content of a bundled script file with its path."""
+    path: Path
+    content: str
+
+
+@dataclass
 class ParsedSkill:
     path: Path
     metadata: SkillMetadata
     body: str
     code_blocks: list[dict] = field(default_factory=list)
     bundled_files: list[Path] = field(default_factory=list)
+    bundled_content: list[BundledFileContent] = field(default_factory=list)
 
 
 @dataclass

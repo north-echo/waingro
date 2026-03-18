@@ -1,37 +1,13 @@
 """Network rules: detect reverse shells, C2, and tunnel patterns."""
 
 import re
-from pathlib import Path
 
 from waingro.models import Finding, FindingCategory, ParsedSkill, Severity
-from waingro.rules import Rule, register_rule
+from waingro.rules import Rule, register_rule, search_skill_content
 
 KNOWN_C2_IPS = [
     "91.92.242.30",
 ]
-
-
-def _search_body_and_blocks(
-    skill: ParsedSkill, patterns: list[re.Pattern],
-) -> list[tuple[str, int | None, Path]]:
-    hits = []
-    body_lines = skill.body.split("\n")
-    skill_md = skill.path / "SKILL.md"
-
-    for i, line in enumerate(body_lines, start=1):
-        for pat in patterns:
-            m = pat.search(line)
-            if m:
-                hits.append((m.group(0), i, skill_md))
-
-    for block in skill.code_blocks:
-        for j, line in enumerate(block["content"].split("\n")):
-            for pat in patterns:
-                m = pat.search(line)
-                if m:
-                    hits.append((m.group(0), block["line"] + j, skill_md))
-
-    return hits
 
 
 @register_rule
@@ -51,7 +27,7 @@ class ReverseShell(Rule):
 
     def evaluate(self, skill: ParsedSkill) -> list[Finding]:
         findings = []
-        for matched, line, fpath in _search_body_and_blocks(skill, self._patterns):
+        for matched, line, fpath in search_skill_content(skill,self._patterns):
             findings.append(Finding(
                 rule_id=self.rule_id,
                 title=self.title,
@@ -76,7 +52,7 @@ class KnownC2Infrastructure(Rule):
     def evaluate(self, skill: ParsedSkill) -> list[Finding]:
         patterns = [re.compile(re.escape(ip)) for ip in KNOWN_C2_IPS]
         findings = []
-        for matched, line, fpath in _search_body_and_blocks(skill, patterns):
+        for matched, line, fpath in search_skill_content(skill,patterns):
             findings.append(Finding(
                 rule_id=self.rule_id,
                 title=self.title,
@@ -108,7 +84,7 @@ class TunnelProxy(Rule):
 
     def evaluate(self, skill: ParsedSkill) -> list[Finding]:
         findings = []
-        for matched, line, fpath in _search_body_and_blocks(skill, self._patterns):
+        for matched, line, fpath in search_skill_content(skill,self._patterns):
             findings.append(Finding(
                 rule_id=self.rule_id,
                 title=self.title,
@@ -119,6 +95,38 @@ class TunnelProxy(Rule):
                 line_number=line,
                 matched_content=matched[:200],
                 remediation="Skills should not set up network tunnels or proxies.",
+                reference=None,
+            ))
+        return findings
+
+
+@register_rule
+class DnsExfiltration(Rule):
+    rule_id = "NET-004"
+    title = "DNS data exfiltration"
+    description = "Detects DNS queries used as a covert data exfiltration channel"
+
+    _patterns = [
+        re.compile(r"dig\s+.*\$\{?\w+\}?\..*\.", re.IGNORECASE),
+        re.compile(r"nslookup\s+.*\$\{?\w+\}?\."),
+        re.compile(r"dig\s+.*\.data\.", re.IGNORECASE),
+        re.compile(r"host\s+.*\$\{?\w+\}?\.", re.IGNORECASE),
+        re.compile(r"fold\s+-w\s+63"),
+    ]
+
+    def evaluate(self, skill: ParsedSkill) -> list[Finding]:
+        findings = []
+        for matched, line, fpath in search_skill_content(skill, self._patterns):
+            findings.append(Finding(
+                rule_id=self.rule_id,
+                title=self.title,
+                description=self.description,
+                severity=Severity.CRITICAL,
+                category=FindingCategory.NETWORK,
+                file_path=fpath,
+                line_number=line,
+                matched_content=matched[:200],
+                remediation="Skills should not encode data into DNS queries.",
                 reference=None,
             ))
         return findings

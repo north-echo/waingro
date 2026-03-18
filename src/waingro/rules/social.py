@@ -4,37 +4,16 @@ import re
 from pathlib import Path
 
 from waingro.models import Finding, FindingCategory, ParsedSkill, Severity
-from waingro.rules import Rule, register_rule
+from waingro.rules import Rule, register_rule, search_skill_content
 
 KNOWN_GOOD_PACKAGES = {
     "click", "rich", "pyyaml", "requests", "flask", "django", "fastapi",
     "numpy", "pandas", "scipy", "matplotlib", "pytest", "setuptools",
     "pip", "wheel", "node", "npm", "yarn", "typescript", "react",
     "express", "lodash", "axios", "webpack", "vite", "next",
+    "colorama", "jq", "shellcheck", "pylint", "black", "mypy",
+    "jest", "eslint",
 }
-
-
-def _search_body_and_blocks(
-    skill: ParsedSkill, patterns: list[re.Pattern],
-) -> list[tuple[str, int | None, Path]]:
-    hits = []
-    body_lines = skill.body.split("\n")
-    skill_md = skill.path / "SKILL.md"
-
-    for i, line in enumerate(body_lines, start=1):
-        for pat in patterns:
-            m = pat.search(line)
-            if m:
-                hits.append((m.group(0), i, skill_md))
-
-    for block in skill.code_blocks:
-        for j, line in enumerate(block["content"].split("\n")):
-            for pat in patterns:
-                m = pat.search(line)
-                if m:
-                    hits.append((m.group(0), block["line"] + j, skill_md))
-
-    return hits
 
 
 @register_rule
@@ -60,6 +39,9 @@ class FakeDependency(Rule):
         for block in skill.code_blocks:
             for j, line in enumerate(block["content"].split("\n")):
                 all_lines.append((line, block["line"] + j, skill_md))
+        for bf in skill.bundled_content:
+            for k, line in enumerate(bf.content.split("\n"), start=1):
+                all_lines.append((line, k, bf.path))
 
         for line_text, line_num, fpath in all_lines:
             for pat in self._install_patterns:
@@ -100,7 +82,7 @@ class FakeErrorMessage(Rule):
 
     def evaluate(self, skill: ParsedSkill) -> list[Finding]:
         findings = []
-        for matched, line, fpath in _search_body_and_blocks(skill, self._patterns):
+        for matched, line, fpath in search_skill_content(skill, self._patterns):
             findings.append(Finding(
                 rule_id=self.rule_id,
                 title=self.title,
@@ -115,5 +97,39 @@ class FakeErrorMessage(Rule):
                     "commands to fix errors."
                 ),
                 reference="ClawHavoc -- social engineering via fake error messages",
+            ))
+        return findings
+
+
+@register_rule
+class NpmLifecycleHook(Rule):
+    rule_id = "SOCIAL-003"
+    title = "Malicious npm lifecycle hook"
+    description = "Detects npm preinstall/postinstall hooks that execute shell commands"
+
+    _patterns = [
+        re.compile(r'"preinstall"\s*:\s*".*(?:curl|wget|bash|sh|node\s+-e)', re.IGNORECASE),
+        re.compile(r'"postinstall"\s*:\s*".*(?:curl|wget|bash|sh|node\s+-e)', re.IGNORECASE),
+        re.compile(r'"prepare"\s*:\s*".*(?:curl|wget|bash|sh|node\s+-e)', re.IGNORECASE),
+        re.compile(r"child_process.*exec", re.IGNORECASE),
+    ]
+
+    def evaluate(self, skill: ParsedSkill) -> list[Finding]:
+        findings = []
+        for matched, line, fpath in search_skill_content(skill, self._patterns):
+            findings.append(Finding(
+                rule_id=self.rule_id,
+                title=self.title,
+                description=self.description,
+                severity=Severity.CRITICAL,
+                category=FindingCategory.SOCIAL_ENGINEERING,
+                file_path=fpath,
+                line_number=line,
+                matched_content=matched[:200],
+                remediation=(
+                    "npm lifecycle hooks (preinstall/postinstall) should not "
+                    "execute remote scripts or spawn shell processes."
+                ),
+                reference=None,
             ))
         return findings
