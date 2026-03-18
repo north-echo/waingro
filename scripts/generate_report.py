@@ -88,19 +88,24 @@ def generate_full_report(results_dir: Path) -> str:
     fp_skills = [r for r in triage if r["verdict"] == "FP"]
     sus_skills = [r for r in triage if r["verdict"] == "SUS"]
 
-    # Group TPs by category
-    tp_c2 = [s for s in tp_skills if any(
-        f.get("rule_id") == "NET-002" for f in s.get("findings", [])
-    )]
+    # Group TPs by category — C2 campaign grouped by IP reference, not primary rule
+    def _is_c2(s: dict) -> bool:
+        notes = s.get("analyst_notes", "")
+        if "91.92.242.30" in notes or "ClawHavoc C2" in notes:
+            return True
+        return any(f.get("rule_id") == "NET-002" for f in s.get("findings", []))
+
+    tp_c2 = [s for s in tp_skills if _is_c2(s)]
+    c2_ids = set(id(s) for s in tp_c2)
     tp_revshell = [s for s in tp_skills if any(
         f.get("rule_id") == "NET-001" for f in s.get("findings", [])
-    ) and s not in tp_c2]
+    ) and id(s) not in c2_ids]
+    rs_ids = c2_ids | set(id(s) for s in tp_revshell)
     tp_jailbreak = [s for s in tp_skills if any(
         f.get("rule_id") == "INJECT-002" for f in s.get("findings", [])
-    ) and s not in tp_c2 and s not in tp_revshell]
-    tp_curl = [s for s in tp_skills if any(
-        f.get("rule_id") == "EXEC-001" for f in s.get("findings", [])
-    ) and s not in tp_c2 and s not in tp_revshell and s not in tp_jailbreak]
+    ) and id(s) not in rs_ids]
+    assigned_ids = rs_ids | set(id(s) for s in tp_jailbreak)
+    tp_curl = [s for s in tp_skills if id(s) not in assigned_ids]
 
     # Calculate non-OBFUSC-001 findings
     total_findings = agg["total_findings"]
@@ -493,18 +498,25 @@ def generate_disclosure(results_dir: Path) -> str:
     triage = load_json(results_dir / "triage_results.json")
     tp_skills = [r for r in triage if r["verdict"] == "TP"]
 
-    # Group by category
-    c2 = [s for s in tp_skills if any(
-        f.get("rule_id") == "NET-002" for f in s.get("findings", [])
-    )]
+    # Group by category — C2 campaign is the story, so any skill referencing the
+    # C2 IP belongs there regardless of which rule fired as primary
+    def is_c2(s: dict) -> bool:
+        notes = s.get("analyst_notes", "")
+        if "91.92.242.30" in notes or "ClawHavoc C2" in notes:
+            return True
+        return any(f.get("rule_id") == "NET-002" for f in s.get("findings", []))
+
+    c2 = [s for s in tp_skills if is_c2(s)]
+    c2_set = set(id(s) for s in c2)
     revshell = [s for s in tp_skills if any(
         f.get("rule_id") == "NET-001" for f in s.get("findings", [])
-    ) and s not in c2]
+    ) and id(s) not in c2_set]
+    revshell_set = c2_set | set(id(s) for s in revshell)
     jailbreak = [s for s in tp_skills if any(
         f.get("rule_id") == "INJECT-002" for f in s.get("findings", [])
-    ) and s not in c2 and s not in revshell]
-    curl_bash = [s for s in tp_skills
-                 if s not in c2 and s not in revshell and s not in jailbreak]
+    ) and id(s) not in revshell_set]
+    assigned = revshell_set | set(id(s) for s in jailbreak)
+    curl_bash = [s for s in tp_skills if id(s) not in assigned]
 
     lines = []
     lines.append("# ClawhHub Security Disclosure — WAINGRO Static Analysis Audit")
