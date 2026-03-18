@@ -6,7 +6,7 @@ Named after the insider threat from Heat (1995). He ruins everything from the in
 
 ## Why
 
-In February 2026, Bitdefender found ~900 malicious skills on ClawHub (~17-20% of all published skills). The "ClawHavoc" campaign delivered Atomic Stealer (AMOS) via 300+ coordinated skills. Skills run with system-level permissions — terminal, file system, network. A single malicious skill compromises the entire host.
+In February 2026, Bitdefender documented the "ClawHavoc" campaign — coordinated exploitation of the OpenClaw skill ecosystem via malicious skills disguised as legitimate tools. The campaign infrastructure (91.92.242.30 / Omegatech LTD) was later linked to Nova Stealer distribution on other platforms. Skills run with system-level permissions — terminal, file system, network. A single malicious skill compromises the entire host.
 
 ## Install
 
@@ -45,10 +45,14 @@ waingro version
 | EXEC-002 | Execution | CRITICAL | Base64-encoded command execution | ClawHavoc |
 | EXEC-003 | Execution | HIGH | eval/exec with dynamic content | — |
 | EXEC-004 | Execution | CRITICAL | PowerShell download cradles | — |
+| EXEC-005 | Execution | CRITICAL | Hex-encoded command execution | — |
 | EXFIL-001 | Exfiltration | HIGH | Credential file access | Bitdefender |
 | EXFIL-002 | Exfiltration | CRITICAL | macOS Keychain access | — |
 | EXFIL-003 | Exfiltration | HIGH | Browser credential access | — |
 | EXFIL-004 | Exfiltration | HIGH | OpenClaw workspace scraping | Bitdefender |
+| EXFIL-005 | Exfiltration | HIGH | Environment variable harvesting | — |
+| EXFIL-006 | Exfiltration | HIGH | Embedded credential patterns | — |
+| EXFIL-007 | Exfiltration | HIGH | Clipboard monitoring | — |
 | PERSIST-001 | Persistence | HIGH | Crontab modification | — |
 | PERSIST-002 | Persistence | HIGH | macOS LaunchAgent/LaunchDaemon | — |
 | PERSIST-003 | Persistence | HIGH | systemd unit creation | — |
@@ -56,11 +60,15 @@ waingro version
 | NET-001 | Network | CRITICAL | Reverse shell patterns | AuthTool |
 | NET-002 | Network | CRITICAL | Known malicious infrastructure | Bitdefender |
 | NET-003 | Network | HIGH | Tunnel/proxy setup | — |
+| NET-004 | Network | CRITICAL | DNS data exfiltration | — |
 | OBFUSC-001 | Obfuscation | MEDIUM | Base64 encoded strings | — |
 | OBFUSC-002 | Obfuscation | MEDIUM | String concatenation tricks | — |
 | INJECT-001 | Injection | HIGH | Prompt injection patterns | — |
+| INJECT-002 | Injection | CRITICAL | Jailbreak/DAN patterns | — |
+| INJECT-003 | Injection | CRITICAL | Metadata injection | — |
 | SOCIAL-001 | Social Engineering | HIGH | Fake dependency installation | 1Password |
 | SOCIAL-002 | Social Engineering | HIGH | Fake error messages | ClawHavoc |
+| SOCIAL-003 | Social Engineering | CRITICAL | Malicious npm lifecycle hooks | — |
 | TYPO-001 | Typosquatting | HIGH | Skill name typosquatting | — |
 
 ## References
