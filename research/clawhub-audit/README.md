@@ -1,43 +1,47 @@
 # ClawhHub Ecosystem Security Audit
 
-Static analysis of 30,000+ OpenClaw Agent Skills using WAINGRO.
+**March 2026** — Static analysis of 30,000+ OpenClaw Agent Skills using WAINGRO.
 
-**Status:** Responsible disclosure in progress. Per-skill findings are embargoed.
-Aggregate statistics and methodology are published here.
+## Status
 
-## Key Findings
+- **Disclosure filed:** GHSA-c59g-h434-28gw (private, pending maintainer response)
+- **Aggregate data:** Published (this directory)
+- **Per-skill findings:** Embargoed pending responsible disclosure (ETA: April 2026)
+
+## Key Numbers
 
 | Metric | Value |
 |--------|-------|
 | Skills scanned | 30,037 |
-| Confirmed malicious (TP) | 43 (0.14%) |
-| Coordinated C2 campaign | 12 skills across 10 author accounts |
-| Reverse shell payloads | 9 skills |
-| Jailbreak / safety override | 9 skills |
-| Malicious curl-pipe-shell | 13 skills |
-| Skills triaged | 589 |
-| False positives | 145 |
+| Detection rules | 28 (8 categories) |
+| Total findings | 263,693 |
+| CRITICAL findings | 4,997 |
+| Confirmed malicious (TP) | 43 |
+| Coordinated C2 campaign | 12 skills, 10 author accounts |
+| Scan duration | 355 seconds (4 workers) |
 
-## Detection Gap
+## Detection Comparison
 
-| Detection Method | C2 Skills Detected | Rate |
-|-----------------|-------------------|------|
-| WAINGRO (format-aware static analysis) | 12/12 | **100%** |
-| ClawhHub moderation | 9/12 | 75% |
-| VirusTotal | 0/12 | **0%** |
+| Method | C2 Campaign Detection Rate |
+|--------|---------------------------|
+| WAINGRO (format-aware static analysis) | 100% |
+| ClawhHub moderation | 75% |
+| VirusTotal | 0% |
 
-VirusTotal cannot detect instruction-level threats. The malicious intent lives in markdown
-text and YAML metadata — natural language instructions telling an AI agent what to do — not
-in executable code.
+VirusTotal cannot detect instruction-level threats. The malicious intent lives
+in markdown text and YAML metadata — natural language instructions to an AI
+agent — not in executable binary signatures.
 
-## Documents
+## Contents
 
-- **[methodology.md](methodology.md)** — Scan configuration, triage process, and limitations
-- **[data/summary.json](data/summary.json)** — Aggregate scan statistics (no per-skill data)
-
-The full audit report with per-skill findings will be published after the disclosure
-window closes (30 days from initial notification, or upon skill removal).
+- [methodology.md](methodology.md) — Data source, scan configuration, triage process, limitations
+- [data/summary_public.json](data/summary_public.json) — Aggregate statistics (no per-skill data)
+- Full report with per-skill findings will be published after the disclosure window closes
 
 ## Tool
 
-[WAINGRO](https://github.com/north-echo/waingro) — AI Agent Skill Security Scanner
+WAINGRO is open source: [github.com/north-echo/waingro](https://github.com/north-echo/waingro)
+
+## Contact
+
+Christopher Lusk ([@north-echo](https://github.com/north-echo))

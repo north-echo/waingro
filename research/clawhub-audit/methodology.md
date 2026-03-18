@@ -1,68 +1,77 @@
-# ClawhHub Audit Methodology
+# Audit Methodology
+
+## Data Source
+
+The `openclaw/skills` GitHub repository is an official archive of every version
+of every skill published to ClawhHub. We cloned it (`git clone --depth 1`) on
+March 18, 2026 and scanned every directory containing a SKILL.md file.
+
+- **Corpus:** openclaw/skills GitHub archive
+- **Snapshot date:** 2026-03-18
+- **Total skills scanned:** 30,037 (latest version of each skill only)
+- **Unique authors:** ~12,000
+
+We scanned only the latest version of each skill, reflecting what users
+actually install. Historical version analysis is a future work item.
 
 ## Scanner
 
-**WAINGRO v0.1.0** — format-aware static analysis for OpenClaw Agent Skills. Parses SKILL.md
-files (YAML frontmatter, markdown body, fenced code blocks) and bundled scripts (.sh, .py,
-.js, .json). Runs 28 detection rules across 8 threat categories.
+WAINGRO v0.1.0 — a static analysis tool purpose-built for the OpenClaw Agent
+Skills format. It parses:
 
-Source: https://github.com/north-echo/waingro
+- YAML frontmatter (skill metadata)
+- Markdown body (agent instructions)
+- Fenced code blocks (embedded commands)
+- Bundled scripts (.sh, .py, .js, .json files in the skill directory)
 
-## Corpus
+28 detection rules across 8 categories:
 
-The `openclaw/skills` GitHub repository is an official archive of every skill published to
-ClawhHub. We cloned it (`git clone --depth 1`) on March 18, 2026, and scanned every directory
-containing a `SKILL.md` file.
+| Category | Rules | Description |
+|----------|-------|-------------|
+| Execution | EXEC-001..005 | curl-pipe-shell, base64/hex encoded commands, eval/exec, PowerShell cradles |
+| Exfiltration | EXFIL-001..007 | Credential files, Keychain, browser creds, workspace scraping, env harvesting, clipboard |
+| Persistence | PERSIST-001..004 | Crontab, LaunchAgent, systemd, shell profile modification |
+| Network / C2 | NET-001..004 | Reverse shells, known C2 IPs, tunnels, DNS exfiltration |
+| Obfuscation | OBFUSC-001..002 | Base64 strings, string concatenation evasion |
+| Injection | INJECT-001..003 | Prompt injection, jailbreak/DAN, metadata injection |
+| Social Engineering | SOCIAL-001..003 | Fake dependencies, fake errors, npm lifecycle hooks |
+| Typosquatting | TYPO-001 | Skill name similarity to known-good skills |
 
-- **Skills scanned:** 30,037
-- **Unique authors:** ~12,000
-- **Parse errors:** 17
-- **Scan duration:** 355 seconds (4 parallel workers)
-- **Platform:** ThinkCentre M720q (x86_64, Fedora, Python 3.14)
+## Scan Execution
+
+- **Platform:** ThinkCentre M720q (x86_64, Python 3.14)
+- **Parallelism:** 4 workers via ProcessPoolExecutor
+- **Duration:** 355 seconds
+- **Parse errors:** 17 skills failed to parse (logged, not counted as findings)
 
 ## Triage
 
-Findings were split into priority tiers:
+Findings were split into priority tiers for manual review:
 
-- **Tier 1 (exhaustive review):** Skills with C2 IP references (NET-002), reverse shell
-  patterns (NET-001), or jailbreak patterns (INJECT-002). 52 unique skills.
-- **Tier 2 (domain-filtered):** Skills with curl-pipe-shell patterns (EXEC-001). 524 total,
-  filtered to 338 after removing known-safe domains (github.com, brew.sh, etc.).
-- **Tier 3 (sampled):** Skills with eval/exec (EXEC-003) or credential exfiltration patterns
-  (EXFIL-005/006/007). Sampled 200 from ~1,000.
-- **Tier 4 (noise — skipped):** Skills whose only findings came from high-FP-rate rules
-  (OBFUSC-001, EXFIL-001, EXFIL-004, SOCIAL-001, PERSIST-004). 26,313 skills.
+- **Tier 1 (exhaustive review):** Skills with NET-002 (known C2 IPs), NET-001
+  (reverse shells), or INJECT-002 (jailbreak/DAN patterns). ~123 skills.
+- **Tier 2 (domain-filtered review):** Skills with EXEC-001 (curl-pipe-shell),
+  filtered by domain reputation. Known-safe domains (github.com, brew.sh,
+  nodejs.org, etc.) excluded. Remaining unknown/suspicious domains reviewed.
+- **Tier 3 (sample-based review):** Skills with EXEC-003 (eval/exec) or
+  EXFIL-005/006/007 not already in Tier 1/2. Sampled for review.
+- **Tier 4 (skipped):** Skills whose only findings are high-FP-rate rules
+  (OBFUSC-001, EXFIL-001, EXFIL-004, SOCIAL-001, PERSIST-004). Aggregate
+  stats only.
 
-Total skills triaged: 589 (automated heuristics + manual review of Tier 1).
-
-## Triage Verdicts
-
-- **True Positive (TP):** Genuinely malicious or dangerous behavior confirmed
-- **False Positive (FP):** Benign skill, rule fired on legitimate pattern (e.g., security
-  tools embedding detection signatures)
-- **Suspicious (SUS):** Not definitively malicious, warrants deeper investigation
+Total skills triaged: 589. Verdicts: 43 TP, 145 FP, 401 Suspicious (awaiting
+deeper manual review).
 
 ## Limitations
 
-- Static analysis only — no dynamic execution or semantic AI analysis
-- OBFUSC-001 (base64 string detection) has a high false positive rate (66.5% of all findings)
-  and needs threshold tuning
-- Tier 2/3 triage used automated heuristics; full manual review would likely surface
-  additional TPs from the 401 SUS skills
-- Some skill directories in the archive had no SKILL.md (299 skipped)
-- The corpus represents a point-in-time snapshot; skills may have been added or removed since
-
-## Detection Rules
-
-28 rules across 8 categories:
-
-| Category | Rules | Severity Range |
-|----------|-------|---------------|
-| Execution | EXEC-001..005 | CRITICAL–HIGH |
-| Exfiltration | EXFIL-001..007 | CRITICAL–HIGH |
-| Persistence | PERSIST-001..004 | HIGH–MEDIUM |
-| Network | NET-001..004 | CRITICAL–HIGH |
-| Obfuscation | OBFUSC-001..002 | MEDIUM |
-| Injection | INJECT-001..003 | CRITICAL–HIGH |
-| Social Engineering | SOCIAL-001..003 | CRITICAL–HIGH |
-| Typosquatting | TYPO-001 | HIGH |
+1. **Static analysis only.** No dynamic execution, sandbox analysis, or
+   semantic AI analysis of skill behavior.
+2. **OBFUSC-001 noise.** The base64 string detection rule produced 175,370
+   findings (66.5% of all findings). The 40-character threshold matches SHA
+   hashes, UUIDs, and URL paths. Rule tuning is planned.
+3. **Incomplete triage.** 401 skills are marked Suspicious but not yet manually
+   reviewed. The true TP count is likely higher than 43.
+4. **Latest versions only.** Historical versions were not scanned. A skill
+   could have been malicious in a prior version and clean now (or vice versa).
+5. **No API-based semantic analysis.** A future audit phase will use Claude API
+   to analyze skill instructions for semantic intent beyond pattern matching.

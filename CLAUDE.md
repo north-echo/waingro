@@ -66,7 +66,7 @@ EXEC-001..005 (execution), EXFIL-001..007 (exfiltration), PERSIST-001..004 (pers
 
 ## ClawhHub Audit Results
 
-First audit completed March 2026: 30,037 skills scanned, 43 confirmed TPs including a 12-skill C2 campaign (ClawHavoc). Audit data lives on hanna2 at `~/clawhub-corpus/audit_results_v2/` — **not in this repo** (embargoed pending responsible disclosure).
+First audit completed March 2026: 30,037 skills scanned, 43 confirmed TPs including a 12-skill C2 campaign (ClawHavoc). Disclosure filed as GHSA-c59g-h434-28gw on openclaw/clawhub (2026-03-18). Aggregate data published in `research/clawhub-audit/`. Per-skill findings embargoed until 2026-04-17 or maintainer remediation. Audit data lives on hanna2 at `~/clawhub-corpus/audit_results_v2/`.
 
 ## v2 Roadmap (not yet built)
 

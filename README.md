@@ -6,7 +6,7 @@ Named after the insider threat from Heat (1995). He ruins everything from the in
 
 ## Why
 
-In February 2026, Bitdefender documented the "ClawHavoc" campaign — coordinated exploitation of the OpenClaw skill ecosystem via malicious skills disguised as legitimate tools. The campaign infrastructure (91.92.242.30 / Omegatech LTD) was later linked to Nova Stealer distribution on other platforms. Skills run with system-level permissions — terminal, file system, network. A single malicious skill compromises the entire host.
+In February 2026, Bitdefender documented the "ClawHavoc" campaign — coordinated exploitation of the OpenClaw skill ecosystem via malicious skills disguised as legitimate tools. Skills run with system-level permissions — terminal, file system, network. A single malicious skill compromises the entire host.
 
 ## Install
 
@@ -76,6 +76,10 @@ waingro version
 - [Bitdefender Technical Advisory: OpenClaw Exploitation](https://businessinsights.bitdefender.com/technical-advisory-openclaw-exploitation-enterprise-networks)
 - 1Password analysis of malicious Agent Skills (Feb 2026)
 - Repello AI: AI agent supply chain security research
+
+## Research
+
+- [ClawhHub Ecosystem Security Audit](research/clawhub-audit/) — March 2026 audit of 30,037 skills (aggregate results; per-skill findings embargoed pending responsible disclosure)
 
 ## License
 
