@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
-"""Resolve latest version directory for each skill slug in the ClawhHub corpus.
+"""Build a scan manifest from a ClawhHub skills corpus.
 
-Given a corpus root like ~/clawhub-corpus/skills/, where each slug has version
-subdirectories (e.g., skills/weather-check/1.0.0/, skills/weather-check/1.1.0/),
-this script finds the highest semver version for each slug and writes one path
-per line to an output manifest.
+The openclaw/skills archive uses the structure:
+    skills/<author>/<skill-name>/SKILL.md
+    skills/<author>/<skill-name>/scripts/...
+
+This script finds every directory containing a SKILL.md and writes one path
+per line to a manifest file for use with bulk_scan.py.
 
 Usage:
     python scripts/resolve_latest.py \
@@ -15,69 +17,37 @@ Usage:
 from __future__ import annotations
 
 import argparse
-import re
 import sys
 from pathlib import Path
 
-# Matches semver-like strings: 1.0.0, 2.1.3, 0.0.1-beta, etc.
-SEMVER_RE = re.compile(r"^(\d+)\.(\d+)\.(\d+)")
 
+def find_skill_dirs(corpus: Path) -> list[Path]:
+    """Find all directories containing a SKILL.md file.
 
-def parse_semver(name: str) -> tuple[int, int, int] | None:
-    """Extract (major, minor, patch) from a directory name, or None."""
-    m = SEMVER_RE.match(name)
-    if m:
-        return (int(m.group(1)), int(m.group(2)), int(m.group(3)))
-    return None
-
-
-def resolve_latest_version(slug_dir: Path) -> Path | None:
-    """Find the latest version directory under a skill slug directory.
-
-    Priority:
-    1. Highest semver directory
-    2. Directory named "latest" (fallback)
-    3. Only child directory (single version)
-    4. None if empty or no valid versions
+    Returns the parent directory of each SKILL.md, deduplicated.
+    If a skill directory contains nested SKILL.md files (e.g. in subdirectories),
+    only the shallowest one is included.
     """
-    if not slug_dir.is_dir():
-        return None
+    skill_dirs: list[Path] = []
+    seen_parents: set[Path] = set()
 
-    children = [c for c in slug_dir.iterdir() if c.is_dir()]
-    if not children:
-        # No version subdirs — check if SKILL.md is directly in slug dir
-        if (slug_dir / "SKILL.md").exists():
-            return slug_dir
-        return None
+    for skill_md in sorted(corpus.rglob("SKILL.md")):
+        skill_dir = skill_md.parent
 
-    # Try semver resolution
-    versioned = []
-    latest_dir = None
-    for child in children:
-        sv = parse_semver(child.name)
-        if sv:
-            versioned.append((sv, child))
-        elif child.name == "latest":
-            latest_dir = child
+        # Skip if this dir is a child of an already-included skill dir
+        # (e.g., a SKILL.md inside a scripts/ subdirectory)
+        if any(skill_dir != p and str(skill_dir).startswith(str(p) + "/") for p in seen_parents):
+            continue
 
-    if versioned:
-        versioned.sort(key=lambda x: x[0], reverse=True)
-        return versioned[0][1]
+        skill_dirs.append(skill_dir)
+        seen_parents.add(skill_dir)
 
-    if latest_dir:
-        return latest_dir
-
-    # Single child directory — use it
-    if len(children) == 1:
-        return children[0]
-
-    # Multiple non-semver dirs — pick alphabetically last as best guess
-    return sorted(children, key=lambda c: c.name)[-1]
+    return skill_dirs
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Resolve latest version for each ClawhHub skill slug"
+        description="Build scan manifest from ClawhHub skills corpus"
     )
     parser.add_argument(
         "--corpus",
@@ -98,33 +68,23 @@ def main() -> None:
         print(f"Error: corpus directory does not exist: {corpus}", file=sys.stderr)
         sys.exit(1)
 
-    slugs = sorted(d for d in corpus.iterdir() if d.is_dir())
-    resolved = []
-    skipped = []
-
-    for slug_dir in slugs:
-        latest = resolve_latest_version(slug_dir)
-        if latest and (latest / "SKILL.md").exists():
-            resolved.append(latest)
-        else:
-            skipped.append(slug_dir.name)
+    skill_dirs = find_skill_dirs(corpus)
 
     # Write manifest
     args.output.parent.mkdir(parents=True, exist_ok=True)
     with args.output.open("w") as f:
-        for path in resolved:
+        for path in skill_dirs:
             f.write(f"{path}\n")
 
-    print(f"Resolved {len(resolved)} latest versions from {len(slugs)} slugs")
-    if skipped:
-        print(f"Skipped {len(skipped)} slugs (no SKILL.md found)")
-        if len(skipped) <= 20:
-            for s in skipped:
-                print(f"  - {s}")
-        else:
-            for s in skipped[:10]:
-                print(f"  - {s}")
-            print(f"  ... and {len(skipped) - 10} more")
+    # Count authors (depth-1 directories in corpus)
+    authors = {
+        p.relative_to(corpus).parts[0]
+        for p in skill_dirs
+        if len(p.relative_to(corpus).parts) >= 2
+    }
+
+    print(f"Found {len(skill_dirs)} skills from {len(authors)} authors")
+    print(f"Manifest written to {args.output}")
 
 
 if __name__ == "__main__":
