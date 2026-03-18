@@ -10,7 +10,7 @@ readme = "README.md"
 license = {text = "MIT"}
 requires-python = ">=3.11"
 authors = [
-    {name = "Christopher Lusk", email = "clusk@redhat.com"}
+    {name = "Christopher Lusk"}
 ]
 keywords = ["security", "openclaw", "ai-agents", "supply-chain", "scanner"]
 classifiers = [
