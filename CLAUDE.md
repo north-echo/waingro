@@ -8,7 +8,7 @@ Named after the insider threat from Heat (1995).
 
 ```bash
 pip install -e ".[dev]"    # Install in dev mode with test/lint deps
-pytest -v                  # Run all tests (49 tests)
+pytest -v                  # Run all tests (166 tests)
 ruff check .               # Lint (must pass clean)
 ```
 
@@ -51,13 +51,26 @@ Rule ID format: `CATEGORY-NNN` (e.g., `EXEC-005`, `EXFIL-005`)
 - Test fixtures use `example.com` and `127.0.0.1` only — no real malicious infrastructure
 - Verdicts: CLEAN (no findings), WARNING (medium/low), SUSPICIOUS (high), MALICIOUS (critical)
 
-## Current Detection Rules (29 total)
+## Current Detection Rules (28 total)
 
 EXEC-001..005 (execution), EXFIL-001..007 (exfiltration), PERSIST-001..004 (persistence), NET-001..004 (network), OBFUSC-001..002 (obfuscation), INJECT-001..003 (injection), SOCIAL-001..003 (social engineering), TYPO-001 (typosquatting)
 
+## Audit Scripts (`scripts/`)
+
+- `resolve_latest.py` — Build scan manifest from ClawhHub corpus (finds all SKILL.md dirs)
+- `bulk_scan.py` — Parallel bulk scanner with JSONL/JSON output
+- `triage_prep.py` — Split findings into priority tiers with domain extraction
+- `triage.py` — Interactive triage CLI (resume-safe, multi-session)
+- `auto_triage.py` — Automated triage with analyst heuristics
+- `generate_report.py` — Generate audit report, executive summary, and disclosure package
+
+## ClawhHub Audit Results
+
+First audit completed March 2026: 30,037 skills scanned, 43 confirmed TPs including a 12-skill C2 campaign (ClawHavoc). Audit data lives on hanna2 at `~/clawhub-corpus/audit_results_v2/` — **not in this repo** (embargoed pending responsible disclosure).
+
 ## v2 Roadmap (not yet built)
 
+- OBFUSC-001 rule tuning (reduce 66% FP rate — raise threshold, exclude SHA/UUID patterns)
 - Claude API semantic analysis (agent_loop/cost_watchdog pattern from HANNA)
 - SARIF output for DefectDojo/GitHub Advanced Security
-- ClawHub API integration for bulk registry scanning
 - Shared rule library with HANNA/JUSTINE
