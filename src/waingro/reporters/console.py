@@ -16,6 +16,7 @@ SEVERITY_COLORS = {
 VERDICT_COLORS = {
     "MALICIOUS": "bold red",
     "SUSPICIOUS": "red",
+    "REVIEW": "magenta",
     "WARNING": "yellow",
     "CLEAN": "bold green",
 }
@@ -47,7 +48,13 @@ def print_result(result: ScanResult, quiet: bool = False, no_color: bool = False
         sev_style = SEVERITY_COLORS.get(finding.severity, "")
         sev_label = finding.severity.value.upper().ljust(9)
 
-        console.print(f" {sev_label} {finding.rule_id}  {finding.title}", style=sev_style)
+        conf_tag = ""
+        if finding.confidence < 1.0:
+            conf_tag = f"  [confidence={finding.confidence:.2f}]"
+        console.print(
+            f" {sev_label} {finding.rule_id}  {finding.title}{conf_tag}",
+            style=sev_style,
+        )
 
         file_name = finding.file_path.name
         if finding.line_number:
@@ -61,6 +68,15 @@ def print_result(result: ScanResult, quiet: bool = False, no_color: bool = False
         if finding.reference:
             console.print(f"           Ref: {finding.reference}")
 
+        console.print()
+
+    # Security tool score
+    if result.security_tool_score >= 0.3:
+        console.print(
+            f" Security tool score: {result.security_tool_score:.2f}"
+            f" (findings may be detection signatures, not malicious intent)",
+            style="magenta",
+        )
         console.print()
 
     # Summary
@@ -104,7 +120,12 @@ def print_audit_results(
     total_findings = sum(len(r.findings) for r in results)
     malicious = sum(1 for r in results if r.verdict == "MALICIOUS")
     suspicious = sum(1 for r in results if r.verdict == "SUSPICIOUS")
+    review = sum(1 for r in results if r.verdict == "REVIEW")
     clean = sum(1 for r in results if r.verdict == "CLEAN")
     console.print(f" Total: {len(results)} skills, {total_findings} findings")
-    console.print(f" {malicious} malicious, {suspicious} suspicious, {clean} clean")
+    parts = [f"{malicious} malicious", f"{suspicious} suspicious"]
+    if review:
+        parts.append(f"{review} review")
+    parts.append(f"{clean} clean")
+    console.print(f" {', '.join(parts)}")
     console.print()

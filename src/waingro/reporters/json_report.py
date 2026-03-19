@@ -17,6 +17,7 @@ def result_to_dict(result: ScanResult) -> dict:
         "version": __version__,
         "scan_path": str(result.skill_path),
         "verdict": result.verdict,
+        "security_tool_score": result.security_tool_score,
         "files_scanned": result.files_scanned,
         "rules_evaluated": result.rules_evaluated,
         "summary": {
@@ -37,6 +38,8 @@ def result_to_dict(result: ScanResult) -> dict:
                 "matched_content": f.matched_content,
                 "remediation": f.remediation,
                 "reference": f.reference,
+                "confidence": f.confidence,
+                "context_note": f.context_note,
             }
             for f in result.findings
         ],

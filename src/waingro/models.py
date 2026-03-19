@@ -36,6 +36,8 @@ class Finding:
     matched_content: str
     remediation: str
     reference: str | None
+    confidence: float = 1.0
+    context_note: str | None = None
 
 
 @dataclass
@@ -73,13 +75,17 @@ class ScanResult:
     findings: list[Finding] = field(default_factory=list)
     files_scanned: int = 0
     rules_evaluated: int = 0
+    security_tool_score: float = 0.0
 
     @property
     def verdict(self) -> str:
-        if any(f.severity == Severity.CRITICAL for f in self.findings):
+        high_confidence = [f for f in self.findings if f.confidence >= 0.5]
+        if any(f.severity == Severity.CRITICAL for f in high_confidence):
             return "MALICIOUS"
-        if any(f.severity == Severity.HIGH for f in self.findings):
+        if any(f.severity == Severity.HIGH for f in high_confidence):
             return "SUSPICIOUS"
+        if self.findings and not high_confidence:
+            return "REVIEW"
         if any(f.severity in (Severity.MEDIUM, Severity.LOW) for f in self.findings):
             return "WARNING"
         return "CLEAN"
