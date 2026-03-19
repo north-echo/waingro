@@ -65,7 +65,10 @@
   "disclosure": {
     "ghsa_id": "GHSA-c59g-h434-28gw",
     "filed_date": "2026-03-18",
+    "corrected_date": "2026-03-19",
     "embargo_lifts": "2026-04-17",
-    "status": "pending_maintainer_response"
+    "status": "pending_maintainer_response",
+    "confirmed_tp_count": 23,
+    "correction_note": "Original 43 TPs corrected to 23 after manual review. 20 reclassified as FP (security tools with detection signatures)."
   }
 }

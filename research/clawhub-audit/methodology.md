@@ -59,8 +59,10 @@ Findings were split into priority tiers for manual review:
   (OBFUSC-001, EXFIL-001, EXFIL-004, SOCIAL-001, PERSIST-004). Aggregate
   stats only.
 
-Total skills triaged: 589. Verdicts: 43 TP, 145 FP, 401 Suspicious (awaiting
-deeper manual review).
+Total skills triaged: 589. Initial automated verdicts: 43 TP, 145 FP, 401
+Suspicious. After manual review of all Tier 1 findings, 20 skills were
+reclassified from TP to FP (legitimate security tools with embedded detection
+signatures). Final confirmed TPs: 23.
 
 ## Limitations
 
