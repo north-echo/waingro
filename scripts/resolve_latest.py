@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build a scan manifest from a ClawhHub skills corpus.
+"""Build a scan manifest from a ClawHub skills corpus.
 
 The openclaw/skills archive uses the structure:
     skills/<author>/<skill-name>/SKILL.md
@@ -47,7 +47,7 @@ def find_skill_dirs(corpus: Path) -> list[Path]:
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Build scan manifest from ClawhHub skills corpus"
+        description="Build scan manifest from ClawHub skills corpus"
     )
     parser.add_argument(
         "--corpus",

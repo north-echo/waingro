@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Bulk scan pipeline for ClawhHub ecosystem audit.
+"""Bulk scan pipeline for ClawHub ecosystem audit.
 
 Reads a manifest of skill paths (one per line) and runs WAINGRO's scan_skill()
 against each. Produces three output files:
@@ -86,7 +86,7 @@ def scan_one(skill_path_str: str) -> dict:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Bulk scan ClawhHub skills with WAINGRO")
+    parser = argparse.ArgumentParser(description="Bulk scan ClawHub skills with WAINGRO")
     parser.add_argument(
         "--manifest",
         type=Path,

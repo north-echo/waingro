@@ -98,7 +98,7 @@ def display_skill(skill: dict, index: int, total: int, corpus: Path) -> str | No
     print()
     print("=" * 65)
     print(f" [{index}/{total}] Skill: {slug} (v{version})")
-    print(f" ClawhHub: https://clawhub.ai/skills/{slug}")
+    print(f" ClawHub: https://clawhub.ai/skills/{slug}")
     print(f" Scanner Verdict: {verdict_label}")
     print(f" Findings: {finding_count}")
     print("=" * 65)

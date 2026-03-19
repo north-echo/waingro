@@ -1,4 +1,4 @@
-# ClawhHub Ecosystem Security Audit
+# ClawHub Ecosystem Security Audit
 
 **March 2026** — Static analysis of 30,000+ OpenClaw Agent Skills using WAINGRO.
 
@@ -25,7 +25,7 @@
 | Method | C2 Campaign Detection Rate |
 |--------|---------------------------|
 | WAINGRO (format-aware static analysis) | 100% |
-| ClawhHub moderation | 75% |
+| ClawHub moderation | 75% |
 | VirusTotal | 0% |
 
 VirusTotal cannot detect instruction-level threats. The malicious intent lives

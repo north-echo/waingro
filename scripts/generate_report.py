@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate the ClawhHub ecosystem audit report from scan and triage results.
+"""Generate the ClawHub ecosystem audit report from scan and triage results.
 
 Usage:
     python scripts/generate_report.py \
@@ -115,7 +115,7 @@ def generate_full_report(results_dir: Path) -> str:
     lines = []
 
     # === Header ===
-    lines.append("# ClawhHub Ecosystem Security Audit")
+    lines.append("# ClawHub Ecosystem Security Audit")
     lines.append("## WAINGRO Static Analysis of 30,000+ OpenClaw Agent Skills")
     lines.append("")
     lines.append("**Author:** Christopher Lusk (north-echo)")
@@ -130,7 +130,7 @@ def generate_full_report(results_dir: Path) -> str:
     # === Executive Summary ===
     lines.append("## Executive Summary")
     lines.append("")
-    lines.append(f"We scanned **{meta['total_skills_scanned']:,}** skills from the ClawhHub "
+    lines.append(f"We scanned **{meta['total_skills_scanned']:,}** skills from the ClawHub "
                  f"registry using WAINGRO, a format-aware static analysis tool purpose-built "
                  f"for OpenClaw Agent Skills. The scan completed in "
                  f"**{meta['scan_duration_seconds']:.0f} seconds** across "
@@ -171,7 +171,7 @@ def generate_full_report(results_dir: Path) -> str:
     lines.append("### Data Source")
     lines.append("")
     lines.append("The `openclaw/skills` GitHub repository is an official archive of every "
-                 "skill published to ClawhHub. We cloned it (`git clone --depth 1`) and "
+                 "skill published to ClawHub. We cloned it (`git clone --depth 1`) and "
                  "scanned every directory containing a `SKILL.md` file — "
                  f"{meta['total_skills_scanned']:,} skills from "
                  f"~12,000 unique authors.")
@@ -367,7 +367,7 @@ def generate_full_report(results_dir: Path) -> str:
     # === Recommendations ===
     lines.append("## Recommendations")
     lines.append("")
-    lines.append("### For ClawhHub Maintainers")
+    lines.append("### For ClawHub Maintainers")
     lines.append("")
     lines.append("1. **Immediate:** Remove or flag the 12 ClawHavoc C2 skills and the 9 "
                  "reverse shell skills")
@@ -426,14 +426,14 @@ def generate_executive_summary(results_dir: Path) -> str:
     tp_skills = [r for r in triage if r["verdict"] == "TP"]
 
     lines = []
-    lines.append("# ClawhHub Security Audit — Executive Summary")
+    lines.append("# ClawHub Security Audit — Executive Summary")
     lines.append("")
     lines.append(f"**{datetime.now(tz=UTC).strftime('%B %Y')}** | Christopher Lusk "
                  f"(north-echo) | WAINGRO v{WAINGRO_VERSION}")
     lines.append("")
     lines.append("---")
     lines.append("")
-    lines.append(f"We scanned **{meta['total_skills_scanned']:,} skills** from the ClawhHub "
+    lines.append(f"We scanned **{meta['total_skills_scanned']:,} skills** from the ClawHub "
                  f"registry using WAINGRO, a static analysis tool for OpenClaw Agent Skills. "
                  f"We found **{len(tp_skills)} confirmed malicious skills**, including a "
                  f"**coordinated C2 campaign** involving 12 skills.")
@@ -481,7 +481,7 @@ def generate_executive_summary(results_dir: Path) -> str:
     lines.append("## Recommendations")
     lines.append("")
     lines.append("1. Remove the 12 ClawHavoc C2 skills and 9 reverse shell skills immediately")
-    lines.append("2. Integrate format-aware static analysis into the ClawhHub moderation "
+    lines.append("2. Integrate format-aware static analysis into the ClawHub moderation "
                  "pipeline")
     lines.append("3. Block skills referencing known C2 infrastructure at publish time")
     lines.append("")
@@ -519,7 +519,7 @@ def generate_disclosure(results_dir: Path) -> str:
     curl_bash = [s for s in tp_skills if id(s) not in assigned]
 
     lines = []
-    lines.append("# ClawhHub Security Disclosure — WAINGRO Static Analysis Audit")
+    lines.append("# ClawHub Security Disclosure — WAINGRO Static Analysis Audit")
     lines.append("")
     lines.append("**From:** Christopher Lusk (north-echo)")
     lines.append(f"**Date:** {datetime.now(tz=UTC).strftime('%Y-%m-%d')}")
@@ -527,7 +527,7 @@ def generate_disclosure(results_dir: Path) -> str:
     lines.append("")
     lines.append("## Summary")
     lines.append("")
-    lines.append("During a security audit of the ClawhHub skill registry using WAINGRO "
+    lines.append("During a security audit of the ClawHub skill registry using WAINGRO "
                  "(a static analysis tool for OpenClaw Agent Skills), we identified "
                  f"{len(tp_skills)} skills containing confirmed malicious patterns, "
                  "including a coordinated C2 campaign involving 12 skills.")
@@ -571,7 +571,7 @@ def generate_disclosure(results_dir: Path) -> str:
     lines.append("## Recommendation")
     lines.append("")
     lines.append("We recommend considering integration of format-aware static analysis "
-                 "into the ClawhHub moderation pipeline. WAINGRO is open source and the "
+                 "into the ClawHub moderation pipeline. WAINGRO is open source and the "
                  "rule set can be adapted for server-side scanning. We are happy to "
                  "collaborate.")
     lines.append("")
@@ -585,7 +585,7 @@ def generate_disclosure(results_dir: Path) -> str:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Generate ClawhHub audit report")
+    parser = argparse.ArgumentParser(description="Generate ClawHub audit report")
     parser.add_argument("--results-dir", type=Path, required=True)
     parser.add_argument("--output-dir", type=Path, required=True)
     args = parser.parse_args()

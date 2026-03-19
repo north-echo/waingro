@@ -3,7 +3,7 @@
 ## Data Source
 
 The `openclaw/skills` GitHub repository is an official archive of every version
-of every skill published to ClawhHub. We cloned it (`git clone --depth 1`) on
+of every skill published to ClawHub. We cloned it (`git clone --depth 1`) on
 March 18, 2026 and scanned every directory containing a SKILL.md file.
 
 - **Corpus:** openclaw/skills GitHub archive

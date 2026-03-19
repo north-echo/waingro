@@ -7,3 +7,7 @@ build/
 .ruff_cache/
 *.egg
 CLAUDE.md
+clawhub-audit-spec.md
+clawhub-post-triage-spec.md
+clawhub-triage-spec.md
+waingro-test-corpus-spec.md

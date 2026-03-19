@@ -79,7 +79,7 @@ waingro version
 
 ## Research
 
-- [ClawhHub Ecosystem Security Audit](research/clawhub-audit/) — March 2026 audit of 30,037 skills (aggregate results; per-skill findings embargoed pending responsible disclosure)
+- [ClawHub Ecosystem Security Audit](research/clawhub-audit/) — March 2026 audit of 30,037 skills (aggregate results; per-skill findings embargoed pending responsible disclosure)
 
 ## License
 
