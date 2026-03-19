@@ -1,6 +1,7 @@
 """Post-analysis context scoring to identify security tools with detection signatures."""
 
 from waingro.models import Finding, ParsedSkill
+from waingro.parsers.sections import find_section_for_line
 
 SECURITY_KEYWORDS = [
     "scanner", "scan", "audit", "auditor", "security", "guard",
@@ -64,15 +65,25 @@ def compute_security_tool_score(
     if not has_c2 and len(findings) >= 5:
         score += 0.05
 
+    # Section-aware signals (Layer 2 enhancement)
+    if skill.sections:
+        detection_sections = [s for s in skill.sections if s.category == "detection"]
+        if detection_sections:
+            score += min(len(detection_sections) * 0.05, 0.15)
+
     return min(score, 1.0)
 
 
 def adjust_finding_confidence(
-    findings: list[Finding], security_tool_score: float,
+    findings: list[Finding],
+    security_tool_score: float,
+    skill: ParsedSkill | None = None,
 ) -> list[Finding]:
     """Reduce confidence on findings when the skill is likely a security tool."""
     if security_tool_score < 0.3:
         return findings
+
+    sections = skill.sections if skill else []
 
     for finding in findings:
         # Never reduce confidence on NET-002 (known C2 IPs)
@@ -80,10 +91,22 @@ def adjust_finding_confidence(
             continue
 
         reduction = security_tool_score * 0.8
+
+        # Layer 2: further reduce confidence if finding is in a detection section
+        section = None
+        if sections and finding.line_number:
+            section = find_section_for_line(sections, finding.line_number)
+            if section and section.category == "detection":
+                reduction = min(reduction + 0.15, 0.95)
+
         finding.confidence = round(max(1.0 - reduction, 0.1), 2)
+
+        section_note = ""
+        if section:
+            section_note = f" Section: \"{section.heading}\" ({section.category})."
         finding.context_note = (
             f"Pattern found in probable security tool "
-            f"(security_tool_score={security_tool_score:.2f}). "
+            f"(security_tool_score={security_tool_score:.2f}).{section_note} "
             f"Manual review recommended."
         )
 

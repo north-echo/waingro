@@ -18,6 +18,7 @@ def result_to_dict(result: ScanResult) -> dict:
         "scan_path": str(result.skill_path),
         "verdict": result.verdict,
         "security_tool_score": result.security_tool_score,
+        "risk_profile": result.risk_profile,
         "files_scanned": result.files_scanned,
         "rules_evaluated": result.rules_evaluated,
         "summary": {

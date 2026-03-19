@@ -44,6 +44,8 @@ def main() -> None:
 @click.option("-o", "--output", type=click.Path(path_type=Path), default=None)
 @click.option("-q", "--quiet", is_flag=True, default=False)
 @click.option("-v", "--verbose", is_flag=True, default=False)
+@click.option("--semantic", is_flag=True, default=False, help="Enable Claude API semantic analysis")
+@click.option("--semantic-budget", type=float, default=5.0, help="Max spend for semantic analysis")
 def scan(
     path: Path,
     fmt: str,
@@ -53,9 +55,20 @@ def scan(
     output: Path | None,
     quiet: bool,
     verbose: bool,
+    semantic: bool,
+    semantic_budget: float,
 ) -> None:
     """Scan an OpenClaw skill directory or SKILL.md file for security issues."""
     result = scan_skill(path)
+
+    if semantic and result.findings:
+        from waingro.analyzers.semantic import SemanticAnalyzer
+        analyzer = SemanticAnalyzer(budget=semantic_budget)
+        if analyzer.should_analyze(result.verdict, result.security_tool_score):
+            from waingro.parsers.skill import parse_skill as _parse
+            skill = _parse(path)
+            api_result = analyzer.analyze(skill, result.findings)
+            result.findings = analyzer.apply_results(result.findings, api_result)
 
     # Filter by minimum severity
     min_sev = SEVERITY_MAP[min_severity]

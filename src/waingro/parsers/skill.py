@@ -6,6 +6,7 @@ from pathlib import Path
 import yaml
 
 from waingro.models import ParsedSkill, SkillMetadata
+from waingro.parsers.sections import parse_sections
 
 FRONTMATTER_RE = re.compile(r"^---\s*\n(.*?)\n---\s*\n", re.DOTALL)
 CODE_BLOCK_RE = re.compile(r"^```(\w*)\n(.*?)^```", re.MULTILINE | re.DOTALL)
@@ -92,6 +93,7 @@ def parse_skill(path: Path) -> ParsedSkill:
 
     code_blocks = extract_code_blocks(body, start_line_offset=fm_lines)
     bundled_files = discover_bundled_files(skill_dir)
+    sections = parse_sections(body, start_line_offset=fm_lines)
 
     return ParsedSkill(
         path=skill_dir,
@@ -99,4 +101,5 @@ def parse_skill(path: Path) -> ParsedSkill:
         body=body,
         code_blocks=code_blocks,
         bundled_files=bundled_files,
+        sections=sections,
     )

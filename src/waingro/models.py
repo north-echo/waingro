@@ -66,6 +66,7 @@ class ParsedSkill:
     code_blocks: list[dict] = field(default_factory=list)
     bundled_files: list[Path] = field(default_factory=list)
     bundled_content: list[BundledFileContent] = field(default_factory=list)
+    sections: list = field(default_factory=list)  # list[MarkdownSection]
 
 
 @dataclass
@@ -76,6 +77,7 @@ class ScanResult:
     files_scanned: int = 0
     rules_evaluated: int = 0
     security_tool_score: float = 0.0
+    risk_profile: dict = field(default_factory=dict)
 
     @property
     def verdict(self) -> str:

@@ -3,6 +3,7 @@
 from pathlib import Path
 
 from waingro.analyzers.context import adjust_finding_confidence, compute_security_tool_score
+from waingro.analyzers.risk_profile import compute_risk_profile
 from waingro.analyzers.static import run_static_analysis
 from waingro.analyzers.typosquat import check_typosquat, load_known_good_skills
 from waingro.models import BundledFileContent, ScanResult
@@ -37,7 +38,10 @@ def scan_skill(path: Path, known_good_path: Path | None = None) -> ScanResult:
 
     # Context analysis — adjust confidence for security tools
     security_tool_score = compute_security_tool_score(skill, findings)
-    findings = adjust_finding_confidence(findings, security_tool_score)
+    findings = adjust_finding_confidence(findings, security_tool_score, skill)
+
+    # Risk profile
+    profile = compute_risk_profile(findings, security_tool_score)
 
     return ScanResult(
         skill_path=skill.path,
@@ -46,6 +50,7 @@ def scan_skill(path: Path, known_good_path: Path | None = None) -> ScanResult:
         files_scanned=files_scanned,
         rules_evaluated=rules_evaluated,
         security_tool_score=security_tool_score,
+        risk_profile=profile.to_dict(),
     )
 
 
