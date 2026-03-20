@@ -46,6 +46,7 @@ waingro version
 | EXEC-003 | Execution | HIGH | eval/exec with dynamic content | — |
 | EXEC-004 | Execution | CRITICAL | PowerShell download cradles | — |
 | EXEC-005 | Execution | CRITICAL | Hex-encoded command execution | — |
+| EXEC-006 | Execution | CRITICAL | Hidden execution in bundled scripts | Polymarket trojan |
 | EXFIL-001 | Exfiltration | HIGH | Credential file access | Bitdefender |
 | EXFIL-002 | Exfiltration | CRITICAL | macOS Keychain access | — |
 | EXFIL-003 | Exfiltration | HIGH | Browser credential access | — |
