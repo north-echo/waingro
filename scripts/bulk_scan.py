@@ -53,6 +53,8 @@ def scan_one(skill_path_str: str) -> dict:
                 "matched_content": f.matched_content,
                 "remediation": f.remediation,
                 "reference": f.reference,
+                "confidence": f.confidence,
+                "context_note": f.context_note,
             })
 
         # Extract slug and version from path
@@ -76,6 +78,8 @@ def scan_one(skill_path_str: str) -> dict:
             "findings": findings,
             "files_scanned": result.files_scanned,
             "rules_evaluated": result.rules_evaluated,
+            "security_tool_score": result.security_tool_score,
+            "risk_profile": result.risk_profile,
         }
     except Exception as exc:
         return {
@@ -215,7 +219,7 @@ def main() -> None:
     summary = {
         "scan_metadata": {
             "scan_date": datetime.now(tz=UTC).isoformat(),
-            "waingro_version": "0.1.0",
+            "waingro_version": "0.3.0",
             "rule_count": ok_results[0]["rules_evaluated"] if ok_results else 0,
             "corpus_source": "openclaw/skills (github archive)",
             "total_skills_scanned": len(ok_results),
