@@ -16,9 +16,11 @@
 | Detection rules | 28 (8 categories) |
 | Total findings | 263,693 |
 | CRITICAL findings | 4,997 |
-| Confirmed malicious (TP) | 23 |
+| Confirmed malicious (TP) | 25 |
 | Coordinated C2 campaign | 12 skills, 10 author accounts |
+| Trojanized tool (hidden backdoor) | 2 skills |
 | Reverse shell payloads | 9 skills |
+| Independent campaigns identified | 2 |
 | Reclassified as FP (security tools) | 20 |
 | Scan duration | 355 seconds (4 workers) |
 

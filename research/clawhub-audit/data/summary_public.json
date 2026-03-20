@@ -68,7 +68,8 @@
     "corrected_date": "2026-03-19",
     "embargo_lifts": "2026-04-17",
     "status": "pending_maintainer_response",
-    "confirmed_tp_count": 23,
-    "correction_note": "Original 43 TPs corrected to 23 after manual review. 20 reclassified as FP (security tools with detection signatures)."
+    "confirmed_tp_count": 25,
+    "independent_campaigns": 2,
+    "correction_note": "Original 43 TPs corrected to 25. 20 reclassified as FP (security tools). 2 new TPs found in SUS rescan (trojanized Polymarket client with hidden backdoor)."
   }
 }
