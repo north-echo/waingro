@@ -22,11 +22,10 @@ class CredentialFileAccess(Rule):
         re.compile(r"~/\.netrc|\.netrc"),
         re.compile(r"~/\.mykey|\.mykey"),
         re.compile(r"\.env\.local\b"),
-        re.compile(r"(?<!\w)\.env\b(?!\.example)"),
+        re.compile(r"(?<!\w)\.env\b(?!\.example|\.template|\.sample)"),
         re.compile(r"\bid_rsa\b"),
         re.compile(r"\bid_ed25519\b"),
         re.compile(r"\.pem\b"),
-        re.compile(r"\.key\b"),
         re.compile(r"~/\.config/gh/hosts\.yml|\.config/gh/hosts\.yml"),
         re.compile(r"~/\.npmrc|\.npmrc"),
         re.compile(r"~/\.docker/config\.json|\.docker/config\.json"),
@@ -36,9 +35,24 @@ class CredentialFileAccess(Rule):
         re.compile(r"_authToken", re.IGNORECASE),
     ]
 
+    # Context patterns that indicate documentation, not actual access
+    _doc_context_re = re.compile(
+        r"example|template|sample|documentation|configure|tutorial|"
+        r"\.env\.example|\.env\.template|\.env\.sample|"
+        r"translation\.key|localization\.key|cache\.key|primary\.key",
+        re.IGNORECASE,
+    )
+
     def evaluate(self, skill: ParsedSkill) -> list[Finding]:
         findings = []
-        for matched, line, fpath in search_skill_content(skill, self._patterns):
+        for matched, line_num, fpath in search_skill_content(skill, self._patterns):
+            # Get the full line for context checking
+            if fpath.name == "SKILL.md" and line_num:
+                lines = skill.body.split("\n")
+                idx = line_num - 1
+                full_line = lines[idx] if 0 <= idx < len(lines) else ""
+                if self._doc_context_re.search(full_line):
+                    continue
             findings.append(Finding(
                 rule_id=self.rule_id,
                 title=self.title,
@@ -46,7 +60,7 @@ class CredentialFileAccess(Rule):
                 severity=Severity.HIGH,
                 category=FindingCategory.EXFILTRATION,
                 file_path=fpath,
-                line_number=line,
+                line_number=line_num,
                 matched_content=matched[:200],
                 remediation=(
                     "Skills should not access SSH keys, AWS credentials, "
