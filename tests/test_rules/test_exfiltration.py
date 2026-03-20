@@ -74,7 +74,7 @@ def test_exfil_006_aws_key(make_inline_skill):
     """EXFIL-006 detects AWS access key pattern (AKIA...)."""
     # AKIA followed by 16 uppercase alphanumeric chars
     skill = make_inline_skill(
-        body="aws_access_key_id = AKIAIOSFODNN7EXAMPLE"
+        body="aws_access_key_id = AKIAI44QH8DHBM7PQRSA"
     )
     findings = EmbeddedCredentialPatterns().evaluate(skill)
     assert len(findings) >= 1
@@ -89,6 +89,22 @@ def test_exfil_006_github_token(make_inline_skill):
     findings = EmbeddedCredentialPatterns().evaluate(skill)
     assert len(findings) >= 1
     assert findings[0].rule_id == "EXFIL-006"
+
+
+def test_exfil_006_placeholder_key_ignored(make_inline_skill):
+    """EXFIL-006 ignores placeholder API keys in documentation."""
+    skill = make_inline_skill(
+        body="openai_api_key = sk-abcdefghijklmnopqrstuvwxyz0123456789"
+    )
+    findings = EmbeddedCredentialPatterns().evaluate(skill)
+    assert len(findings) == 0
+
+
+def test_exfil_006_example_key_ignored(make_inline_skill):
+    """EXFIL-006 ignores keys with EXAMPLE/fake/test markers."""
+    skill = make_inline_skill(body="AKIAIOSFODNN7EXAMPLE")
+    findings = EmbeddedCredentialPatterns().evaluate(skill)
+    assert len(findings) == 0
 
 
 def test_exfil_006_clean(make_inline_skill):

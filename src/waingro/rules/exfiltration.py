@@ -198,9 +198,18 @@ class EmbeddedCredentialPatterns(Rule):
         re.compile(r"glpat-[A-Za-z0-9\-]{20,}"),
     ]
 
+    # Placeholder patterns used in documentation/config examples
+    _placeholder_re = re.compile(
+        r"(?:abcdef|xxxx|0000|fake|test|example|placeholder|DO_NOT_USE"
+        r"|your.?key|your.?token|REPLACE)",
+        re.IGNORECASE,
+    )
+
     def evaluate(self, skill: ParsedSkill) -> list[Finding]:
         findings = []
         for matched, line, fpath in search_skill_content(skill, self._patterns):
+            if self._placeholder_re.search(matched):
+                continue
             findings.append(Finding(
                 rule_id=self.rule_id,
                 title=self.title,

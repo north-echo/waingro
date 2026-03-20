@@ -45,6 +45,22 @@ def test_exec_003_eval_dollar_var(make_inline_skill):
     assert findings[0].rule_id == "EXEC-003"
 
 
+def test_exec_003_dot_exec_ignored(make_inline_skill):
+    """EXEC-003 ignores .exec() method calls (regex.exec, db.exec)."""
+    skill = make_inline_skill(
+        body="const match = pattern.exec(line);\ndb.exec('CREATE TABLE t');"
+    )
+    findings = EvalExec().evaluate(skill)
+    assert len(findings) == 0
+
+
+def test_exec_003_standalone_exec_still_caught(make_inline_skill):
+    """EXEC-003 still catches standalone exec() calls."""
+    skill = make_inline_skill(body="exec(compile(code, '<string>', 'exec'))")
+    findings = EvalExec().evaluate(skill)
+    assert len(findings) >= 1
+
+
 def test_exec_004_powershell(clean_basic_skill):
     rule = PowerShellCradle()
     findings = rule.evaluate(clean_basic_skill)
@@ -72,6 +88,15 @@ def test_exec_005_xxd(make_inline_skill):
     findings = HexEncodedExecution().evaluate(skill)
     assert len(findings) >= 1
     assert findings[0].rule_id == "EXEC-005"
+
+
+def test_exec_005_ansi_escape_ignored(make_inline_skill):
+    """EXEC-005 ignores ANSI escape codes (terminal colors)."""
+    skill = make_inline_skill(
+        body=r"const green = '\x1b[32m\u2713\x1b[0m';"
+    )
+    findings = HexEncodedExecution().evaluate(skill)
+    assert len(findings) == 0
 
 
 def test_exec_005_clean(make_inline_skill):

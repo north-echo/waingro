@@ -83,7 +83,7 @@ class EvalExec(Rule):
         re.compile(r"\beval\s*\("),
         re.compile(r'\beval\s+"\$'),
         re.compile(r"\beval\s+\$"),
-        re.compile(r"\bexec\s*\("),
+        re.compile(r"(?<!\.)exec\s*\("),  # Skip .exec() (regex.exec, db.exec)
         re.compile(r"os\.system\s*\("),
         re.compile(r"subprocess\.(call|run|Popen)\s*\([^)]*shell\s*=\s*True"),
     ]
@@ -148,12 +148,18 @@ class HexEncodedExecution(Rule):
         re.compile(r"bytes\.fromhex\s*\("),
         re.compile(r"xxd\s+-r\s+-p"),
         re.compile(r"echo\s+[\"'][0-9a-fA-F]+[\"']\s*\|\s*xxd\s+-r"),
-        re.compile(r"\\x[0-9a-fA-F]{2}.*\\x[0-9a-fA-F]{2}"),
+        re.compile(r"\\x[0-9a-fA-F]{2}(?!.*\\x1b\[).*\\x[0-9a-fA-F]{2}"),
     ]
+
+    # ANSI escape sequences (terminal colors) that look like hex
+    _ansi_re = re.compile(r"\\x1b\[")
 
     def evaluate(self, skill: ParsedSkill) -> list[Finding]:
         findings = []
         for matched, line, fpath in search_skill_content(skill, self._patterns):
+            # Skip ANSI escape code false positives
+            if self._ansi_re.search(matched):
+                continue
             findings.append(Finding(
                 rule_id=self.rule_id,
                 title=self.title,
