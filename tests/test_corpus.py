@@ -18,6 +18,7 @@ BENIGN_FIXTURES = [
     CORPUS_DIR / "benign" / "weather-checker",
     CORPUS_DIR / "benign" / "code-reviewer",
     CORPUS_DIR / "benign" / "daily-standup",
+    CORPUS_DIR / "benign" / "bundled-subprocess",
 ]
 
 MALICIOUS_FIXTURES = [

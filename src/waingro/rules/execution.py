@@ -173,3 +173,57 @@ class HexEncodedExecution(Rule):
                 reference=None,
             ))
         return findings
+
+
+@register_rule
+class HiddenBundledExecution(Rule):
+    rule_id = "EXEC-006"
+    title = "Hidden execution in bundled script"
+    description = "Detects os.system, subprocess, or exec calls with URLs/IPs in bundled scripts"
+
+    _py_patterns = [
+        re.compile(r"os\.system\s*\(.*https?://"),
+        re.compile(r"os\.system\s*\(.*\d+\.\d+\.\d+\.\d+"),
+        re.compile(r"os\.system\s*\(.*\|\s*(bash|sh)"),
+        re.compile(r"subprocess\.\w+\s*\(.*https?://.*shell\s*=\s*True"),
+    ]
+    _sh_patterns = [
+        re.compile(r"curl\s+[^|]*\|\s*(bash|sh|eval)", re.IGNORECASE),
+        re.compile(r"wget\s+[^|]*\|\s*(bash|sh|eval)", re.IGNORECASE),
+    ]
+    _js_patterns = [
+        re.compile(r"child_process.*exec\s*\(.*https?://"),
+        re.compile(r"child_process.*exec\s*\(.*\d+\.\d+\.\d+\.\d+"),
+        re.compile(r"child_process.*exec\s*\(.*\|\s*(bash|sh)"),
+    ]
+    _ext_patterns = {
+        ".py": _py_patterns, ".sh": _sh_patterns, ".bash": _sh_patterns,
+        ".js": _js_patterns, ".mjs": _js_patterns,
+    }
+
+    def evaluate(self, skill: ParsedSkill) -> list[Finding]:
+        findings = []
+        for bf in skill.bundled_content:
+            patterns = self._ext_patterns.get(bf.path.suffix)
+            if not patterns:
+                continue
+            for k, line_text in enumerate(bf.content.split("\n"), start=1):
+                for pat in patterns:
+                    m = pat.search(line_text)
+                    if m:
+                        findings.append(Finding(
+                            rule_id=self.rule_id,
+                            title=self.title,
+                            description=f"Hidden execution in bundled {bf.path.name}",
+                            severity=Severity.CRITICAL,
+                            category=FindingCategory.EXECUTION,
+                            file_path=bf.path,
+                            line_number=k,
+                            matched_content=m.group(0)[:200],
+                            remediation=(
+                                "Bundled scripts should not contain hidden execution "
+                                "calls with URLs or IP addresses."
+                            ),
+                            reference="Polymarket trojan pattern",
+                        ))
+        return findings
