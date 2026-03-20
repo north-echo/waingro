@@ -119,7 +119,8 @@ class SemanticAnalyzer:
         try:
             response = self.client.messages.create(
                 model=self.model,
-                max_tokens=1024,
+                max_tokens=512,
+                system="You are a JSON-only classifier. Return ONLY valid JSON, no explanation.",
                 messages=[{"role": "user", "content": prompt}],
             )
 

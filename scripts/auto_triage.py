@@ -32,14 +32,21 @@ MALICIOUS_DOMAINS = {
 # Domains that are definitely safe in a curl|bash context
 SAFE_DOMAINS = {
     "raw.githubusercontent.com", "github.com", "objects.githubusercontent.com",
-    "astral.sh", "bun.sh", "sh.rustup.rs", "rustup.rs",
-    "deb.nodesource.com", "get.docker.com", "brew.sh",
-    "mise.jdx.dev", "mise.run", "cli.github.com", "deno.land",
-    "get.helm.sh", "starship.rs", "ohmyz.sh", "install.python-poetry.org",
-    "pypi.org", "download.docker.com", "rpm.nodesource.com",
-    "get.sdkman.io", "sdkman.io", "ollama.com", "ollama.ai",
+    "cli.github.com", "gitlab.com", "gitee.com",
+    "astral.sh", "bun.sh", "sh.rustup.rs", "rustup.rs", "deno.land",
+    "deb.nodesource.com", "rpm.nodesource.com", "fnm.vercel.app",
+    "get.docker.com", "download.docker.com", "brew.sh",
+    "mise.jdx.dev", "mise.run", "get.helm.sh",
+    "starship.rs", "ohmyz.sh", "install.python-poetry.org", "pyenv.run",
+    "pypi.org", "get.sdkman.io", "sdkman.io", "get.volta.sh",
+    "sdk.cloud.google.com", "packages.microsoft.com",
+    "ollama.com", "ollama.ai", "cli.inference.sh", "nvidia.com",
     "tailscale.com", "fly.io", "download.newrelic.com", "get.tur.so",
-    "foundry.paradigm.xyz",
+    "foundry.paradigm.xyz", "sentry.io", "get.k3s.io", "get.expanso.io",
+    "openclaw.ai", "get.openclaw.ai", "skillboss.co", "cursor.com",
+    "rclone.org", "install.surrealdb.com", "install.cmem.ai", "parallel.ai",
+    "proton.me", "resend.com", "claude.ai",
+    "example.com", "cdn.example.com", "xyz.example.com", "get.example.com",
 }
 
 # Patterns in SKILL.md body that indicate educational/documentation context
