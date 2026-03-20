@@ -14,36 +14,65 @@ from waingro.models import Finding, ParsedSkill
 
 logger = logging.getLogger(__name__)
 
-SEMANTIC_PROMPT = """You are analyzing an OpenClaw agent skill file (SKILL.md) for security.
+SEMANTIC_PROMPT = """Analyze this OpenClaw agent skill file for security.
 
-The following detection rules fired on this skill:
+The following detection rules fired:
 
 {findings_summary}
 
-For each finding, determine:
-1. Is the pattern in an EXECUTION context (skill instructs the agent to do this)?
-2. Or in a DETECTION context (skill instructs the agent to identify/block this)?
+Determine whether each pattern is in an EXECUTION context (the skill instructs
+the agent to perform this action) or a DETECTION context (the skill instructs
+the agent to identify/block this pattern in other content).
 
-Return JSON only, no other text:
-{{
-  "skill_classification": "malicious" | "security_tool" | "ambiguous",
-  "findings": [
-    {{
-      "rule_id": "...",
-      "context": "execution" | "detection" | "ambiguous",
-      "reasoning": "brief explanation"
-    }}
-  ]
-}}
+Use the submit_verdict tool to report your analysis.
 
 SKILL.md content:
 ```
 {skill_content}
 ```"""
 
+VERDICT_TOOL = {
+    "name": "submit_verdict",
+    "description": "Submit the security analysis verdict for this skill",
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "verdict": {
+                "type": "string",
+                "enum": ["MALICIOUS", "SUSPICIOUS", "REVIEW", "CLEAN"],
+            },
+            "confidence": {
+                "type": "number",
+                "minimum": 0.0,
+                "maximum": 1.0,
+            },
+            "is_security_tool": {
+                "type": "boolean",
+            },
+            "reasoning": {
+                "type": "string",
+            },
+            "findings": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "pattern": {"type": "string"},
+                        "intent": {
+                            "type": "string",
+                            "enum": ["offensive", "defensive", "ambiguous"],
+                        },
+                    },
+                },
+            },
+        },
+        "required": ["verdict", "confidence", "is_security_tool", "reasoning"],
+    },
+}
+
 DEFAULT_MODEL = "claude-sonnet-4-20250514"
 DEFAULT_BUDGET = 5.00
-MAX_SKILL_TOKENS = 8000  # ~8K tokens, most skills are under 4K
+MAX_SKILL_TOKENS = 8000
 
 
 class SemanticAnalyzer:
@@ -90,21 +119,19 @@ class SemanticAnalyzer:
             return False
         if verdict not in ("REVIEW", "SUSPICIOUS"):
             return False
-        # Ambiguous zone: security_tool_score between 0.3 and 0.7
         return 0.3 <= security_tool_score <= 0.7
 
     def analyze(
         self, skill: ParsedSkill, findings: list[Finding],
     ) -> dict:
-        """Run semantic analysis on a skill. Returns API classification."""
+        """Run semantic analysis on a skill via tool_use."""
         findings_summary = "\n".join(
             f"- {f.rule_id} ({f.severity.value}): {f.title} — "
             f"matched: {f.matched_content[:100]}"
-            for f in findings[:15]  # cap to control token usage
+            for f in findings[:15]
         )
 
-        # Truncate skill content
-        content = skill.body[:MAX_SKILL_TOKENS * 4]  # rough char-to-token ratio
+        content = skill.body[:MAX_SKILL_TOKENS * 4]
         for bf in skill.bundled_content:
             remaining = MAX_SKILL_TOKENS * 4 - len(content)
             if remaining > 200:
@@ -120,32 +147,86 @@ class SemanticAnalyzer:
             response = self.client.messages.create(
                 model=self.model,
                 max_tokens=512,
-                system="You are a JSON-only classifier. Return ONLY valid JSON, no explanation.",
+                tools=[VERDICT_TOOL],
+                tool_choice={"type": "tool", "name": "submit_verdict"},
                 messages=[{"role": "user", "content": prompt}],
             )
 
-            # Track cost (approximate: $3/M input, $15/M output for Sonnet)
+            # Track cost
             input_tokens = response.usage.input_tokens
             output_tokens = response.usage.output_tokens
             cost = (input_tokens * 3 + output_tokens * 15) / 1_000_000
             self._spent += cost
 
-            text = response.content[0].text
-            # Strip markdown code fences if present
-            text = text.strip()
-            if text.startswith("```"):
-                text = text.split("\n", 1)[1] if "\n" in text else text[3:]
-            if text.endswith("```"):
-                text = text[: text.rfind("```")]
-            text = text.strip()
-            return json.loads(text)
+            # Extract tool_use result — already parsed JSON
+            for block in response.content:
+                if block.type == "tool_use" and block.name == "submit_verdict":
+                    return self._normalize_result(block.input)
 
-        except json.JSONDecodeError:
-            logger.warning("Semantic analysis returned non-JSON for %s", skill.metadata.name)
-            return {"skill_classification": "ambiguous", "findings": []}
+            # Fallback: try text content with JSON parsing
+            for block in response.content:
+                if block.type == "text":
+                    return self._parse_text_response(block.text, skill.metadata.name)
+
+            logger.warning("No tool_use block in response for %s", skill.metadata.name)
+            return self._default_result()
+
         except Exception:
             logger.exception("Semantic analysis failed for %s", skill.metadata.name)
-            return {"skill_classification": "ambiguous", "findings": []}
+            return self._default_result()
+
+    def _normalize_result(self, tool_input: dict) -> dict:
+        """Convert tool_use input to the internal result format."""
+        is_security = tool_input.get("is_security_tool", False)
+        verdict = tool_input.get("verdict", "SUSPICIOUS")
+
+        if is_security:
+            classification = "security_tool"
+        elif verdict == "MALICIOUS":
+            classification = "malicious"
+        else:
+            classification = "ambiguous"
+
+        finding_contexts = []
+        for f in tool_input.get("findings", []):
+            intent = f.get("intent", "ambiguous")
+            context = {
+                "offensive": "execution",
+                "defensive": "detection",
+                "ambiguous": "ambiguous",
+            }.get(intent, "ambiguous")
+            finding_contexts.append({
+                "rule_id": f.get("pattern", ""),
+                "context": context,
+                "reasoning": tool_input.get("reasoning", ""),
+            })
+
+        return {
+            "skill_classification": classification,
+            "verdict": verdict,
+            "confidence": tool_input.get("confidence", 0.5),
+            "is_security_tool": is_security,
+            "reasoning": tool_input.get("reasoning", ""),
+            "findings": finding_contexts,
+        }
+
+    def _parse_text_response(self, text: str, skill_name: str) -> dict:
+        """Fallback: parse raw text as JSON."""
+        text = text.strip()
+        if text.startswith("```"):
+            text = text.split("\n", 1)[1] if "\n" in text else text[3:]
+        if text.endswith("```"):
+            text = text[: text.rfind("```")]
+        text = text.strip()
+        try:
+            return json.loads(text)
+        except json.JSONDecodeError:
+            logger.warning("Semantic text response not JSON for %s", skill_name)
+            return self._default_result()
+
+    @staticmethod
+    def _default_result() -> dict:
+        return {"skill_classification": "ambiguous", "findings": []}
 
     def apply_results(
         self, findings: list[Finding], result: dict,
@@ -153,13 +234,13 @@ class SemanticAnalyzer:
         """Apply semantic analysis results to findings."""
         classification = result.get("skill_classification", "ambiguous")
         finding_contexts = {
-            f["rule_id"]: f["context"]
+            f.get("rule_id", ""): f.get("context", "ambiguous")
             for f in result.get("findings", [])
         }
 
         for finding in findings:
             if finding.rule_id == "NET-002":
-                continue  # Never adjust C2 IP findings
+                continue
 
             ctx = finding_contexts.get(finding.rule_id, "ambiguous")
             if classification == "security_tool" or ctx == "detection":

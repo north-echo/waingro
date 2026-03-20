@@ -82,6 +82,39 @@ def test_apply_never_adjusts_net002():
     assert adjusted[0].confidence == 1.0  # Unchanged
 
 
+def test_normalize_tool_use_security_tool():
+    """Tool use result with is_security_tool=True normalizes correctly."""
+    a = SemanticAnalyzer(api_key="fake")
+    result = a._normalize_result({
+        "verdict": "REVIEW",
+        "confidence": 0.9,
+        "is_security_tool": True,
+        "reasoning": "Detection signatures in blocked patterns section",
+        "findings": [
+            {"pattern": "INJECT-002", "intent": "defensive"},
+        ],
+    })
+    assert result["skill_classification"] == "security_tool"
+    assert result["confidence"] == 0.9
+    assert result["findings"][0]["context"] == "detection"
+
+
+def test_normalize_tool_use_malicious():
+    """Tool use result with MALICIOUS verdict normalizes correctly."""
+    a = SemanticAnalyzer(api_key="fake")
+    result = a._normalize_result({
+        "verdict": "MALICIOUS",
+        "confidence": 0.95,
+        "is_security_tool": False,
+        "reasoning": "Hidden os.system call with C2 IP",
+        "findings": [
+            {"pattern": "EXEC-001", "intent": "offensive"},
+        ],
+    })
+    assert result["skill_classification"] == "malicious"
+    assert result["findings"][0]["context"] == "execution"
+
+
 def test_missing_api_key_raises():
     import os
     old = os.environ.pop("ANTHROPIC_API_KEY", None)
