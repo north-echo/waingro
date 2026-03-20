@@ -1,12 +1,17 @@
 """Social engineering rules: detect fake dependencies and misleading error messages."""
 
+import logging
 import re
 from pathlib import Path
 
 from waingro.models import Finding, FindingCategory, ParsedSkill, Severity
 from waingro.rules import Rule, register_rule, search_skill_content
 
-KNOWN_GOOD_PACKAGES = {
+logger = logging.getLogger(__name__)
+
+_PACKAGES_PATH = Path(__file__).parent.parent / "data" / "known_packages.txt"
+
+_FALLBACK_PACKAGES = {
     "click", "rich", "pyyaml", "requests", "flask", "django", "fastapi",
     "numpy", "pandas", "scipy", "matplotlib", "pytest", "setuptools",
     "pip", "wheel", "node", "npm", "yarn", "typescript", "react",
@@ -14,6 +19,21 @@ KNOWN_GOOD_PACKAGES = {
     "colorama", "jq", "shellcheck", "pylint", "black", "mypy",
     "jest", "eslint",
 }
+
+
+def _load_known_packages() -> set[str]:
+    if not _PACKAGES_PATH.exists():
+        logger.warning("Known packages list not found at %s", _PACKAGES_PATH)
+        return _FALLBACK_PACKAGES
+    packages = set()
+    for line in _PACKAGES_PATH.read_text().splitlines():
+        line = line.strip()
+        if line and not line.startswith("#"):
+            packages.add(line.lower())
+    return packages
+
+
+KNOWN_GOOD_PACKAGES = _load_known_packages()
 
 
 @register_rule
