@@ -1,13 +1,44 @@
 """Network rules: detect reverse shells, C2, and tunnel patterns."""
 
+import logging
 import re
+from pathlib import Path
 
 from waingro.models import Finding, FindingCategory, ParsedSkill, Severity
 from waingro.rules import Rule, register_rule, search_skill_content
 
-KNOWN_C2_IPS = [
-    "91.92.242.30",
-]
+logger = logging.getLogger(__name__)
+
+_BLOCKLIST_PATH = Path(__file__).parent.parent / "data" / "c2_blocklist.txt"
+
+# Fallback if blocklist file is missing
+_FALLBACK_C2_IPS = ["91.92.242.30"]
+
+
+def _load_blocklist() -> list[dict]:
+    """Load C2 blocklist from data file. Returns list of {ip, campaign, source}."""
+    if not _BLOCKLIST_PATH.exists():
+        logger.warning("C2 blocklist not found at %s, using fallback", _BLOCKLIST_PATH)
+        return [{"ip": ip, "campaign": "unknown", "source": "hardcoded fallback"}
+                for ip in _FALLBACK_C2_IPS]
+    entries = []
+    for line in _BLOCKLIST_PATH.read_text().splitlines():
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        parts = line.split("|")
+        if len(parts) >= 1:
+            entries.append({
+                "ip": parts[0].strip(),
+                "campaign": parts[1].strip() if len(parts) > 1 else "unknown",
+                "source": parts[3].strip() if len(parts) > 3 else "",
+            })
+    return entries
+
+
+C2_BLOCKLIST = _load_blocklist()
+KNOWN_C2_IPS = [e["ip"] for e in C2_BLOCKLIST]
+_IP_TO_CAMPAIGN = {e["ip"]: e["campaign"] for e in C2_BLOCKLIST}
 
 
 @register_rule
@@ -52,7 +83,8 @@ class KnownC2Infrastructure(Rule):
     def evaluate(self, skill: ParsedSkill) -> list[Finding]:
         patterns = [re.compile(re.escape(ip)) for ip in KNOWN_C2_IPS]
         findings = []
-        for matched, line, fpath in search_skill_content(skill,patterns):
+        for matched, line, fpath in search_skill_content(skill, patterns):
+            campaign = _IP_TO_CAMPAIGN.get(matched.strip(), "unknown")
             findings.append(Finding(
                 rule_id=self.rule_id,
                 title=self.title,
@@ -63,7 +95,7 @@ class KnownC2Infrastructure(Rule):
                 line_number=line,
                 matched_content=matched[:200],
                 remediation="This IP address is associated with known malicious infrastructure.",
-                reference="Bitdefender -- recurring C2 IP from ClawHavoc",
+                reference=f"Campaign: {campaign}",
             ))
         return findings
 

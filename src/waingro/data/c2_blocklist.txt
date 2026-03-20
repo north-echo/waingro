@@ -1,0 +1,5 @@
+# WAINGRO C2 IP Blocklist
+# Format: IP|campaign|date_added|source
+# Add new entries from confirmed audit TPs. Do not remove old entries.
+91.92.242.30|ClawHavoc|2026-03|Bitdefender + WAINGRO audit v1
+54.91.154.110|Polymarket trojan|2026-03|WAINGRO audit v2 rescan
