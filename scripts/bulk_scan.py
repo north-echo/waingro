@@ -67,11 +67,22 @@ def scan_one(skill_path_str: str) -> dict:
             slug = skill_path.name
             version = "unknown"
 
+        # Extract author from corpus path (skills/<author>/<slug>/...)
+        author = None
+        for i, part in enumerate(parts):
+            if part == "skills" and i + 1 < len(parts):
+                author = parts[i + 1]
+                break
+        # Fall back to metadata author if path extraction fails
+        if not author:
+            author = result.metadata.author
+
         return {
             "status": "ok",
             "skill_path": str(skill_path),
             "skill_slug": slug,
             "skill_version": result.metadata.version or version,
+            "author": author,
             "skill_name": result.metadata.name,
             "verdict": result.verdict,
             "finding_count": len(findings),
@@ -114,6 +125,12 @@ def main() -> None:
         type=int,
         default=0,
         help="Limit to first N skills (0 = all, useful for testing)",
+    )
+    parser.add_argument(
+        "--baseline",
+        type=Path,
+        default=None,
+        help="Path to previous flagged_skills.json for delta comparison",
     )
     args = parser.parse_args()
 
@@ -177,6 +194,7 @@ def main() -> None:
                 line = {
                     "skill_slug": r["skill_slug"],
                     "skill_version": r["skill_version"],
+                    "author": r.get("author"),
                     **finding,
                 }
                 f.write(json.dumps(line, default=str) + "\n")
@@ -211,8 +229,8 @@ def main() -> None:
     flagged_pct = (flagged_count / len(ok_results) * 100) if ok_results else 0
 
     top_20 = [
-        {"skill_slug": r["skill_slug"], "finding_count": r["finding_count"],
-         "verdict": r["verdict"]}
+        {"skill_slug": r["skill_slug"], "author": r.get("author"),
+         "finding_count": r["finding_count"], "verdict": r["verdict"]}
         for r in flagged[:20]
     ]
 
@@ -250,6 +268,69 @@ def main() -> None:
     print(f"  Flagged:        {flagged_count} ({flagged_pct:.1f}%)")
     print(f"  Total findings: {total_findings}")
     print(f"\nOutput written to {output_dir}/")
+
+    # Baseline diff mode
+    if args.baseline:
+        baseline_path = args.baseline.expanduser().resolve()
+        if baseline_path.exists():
+            with baseline_path.open() as f:
+                baseline = json.load(f)
+
+            baseline_by_slug = {s["skill_slug"]: s for s in baseline}
+            current_by_slug = {r["skill_slug"]: r for r in ok_results if r["finding_count"] > 0}
+
+            new_skills = []
+            for slug, r in current_by_slug.items():
+                if slug not in baseline_by_slug:
+                    new_skills.append({
+                        "skill_slug": slug,
+                        "author": r.get("author"),
+                        "verdict": r["verdict"],
+                        "finding_count": r["finding_count"],
+                    })
+
+            removed_skills = []
+            for slug, b in baseline_by_slug.items():
+                if slug not in current_by_slug:
+                    removed_skills.append({
+                        "skill_slug": slug,
+                        "verdict": b["verdict"],
+                    })
+
+            changed_verdict = []
+            for slug in set(current_by_slug) & set(baseline_by_slug):
+                old_v = baseline_by_slug[slug]["verdict"]
+                new_v = current_by_slug[slug]["verdict"]
+                if old_v != new_v:
+                    changed_verdict.append({
+                        "skill_slug": slug,
+                        "author": current_by_slug[slug].get("author"),
+                        "old_verdict": old_v,
+                        "new_verdict": new_v,
+                    })
+
+            delta = {
+                "baseline": str(baseline_path),
+                "new_flagged_skills": len(new_skills),
+                "removed_flagged_skills": len(removed_skills),
+                "verdict_changes": len(changed_verdict),
+                "new_skills": sorted(
+                    new_skills, key=lambda x: x["finding_count"], reverse=True
+                ),
+                "removed_skills": sorted(removed_skills, key=lambda x: x["skill_slug"]),
+                "changed_verdict": sorted(changed_verdict, key=lambda x: x["skill_slug"]),
+            }
+
+            delta_path = output_dir / "delta.json"
+            with delta_path.open("w") as f:
+                json.dump(delta, f, indent=2)
+
+            print("\nBaseline comparison:")
+            print(f"  New flagged skills:     {len(new_skills)}")
+            print(f"  Removed flagged skills: {len(removed_skills)}")
+            print(f"  Verdict changes:        {len(changed_verdict)}")
+        else:
+            print(f"\nWarning: baseline file not found: {baseline_path}")
 
 
 if __name__ == "__main__":

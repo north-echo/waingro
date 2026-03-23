@@ -1,5 +1,7 @@
 """Post-analysis context scoring to identify security tools with detection signatures."""
 
+import re
+
 from waingro.models import Finding, ParsedSkill
 from waingro.parsers.sections import find_section_for_line
 
@@ -109,5 +111,41 @@ def adjust_finding_confidence(
             f"(security_tool_score={security_tool_score:.2f}).{section_note} "
             f"Manual review recommended."
         )
+
+    return findings
+
+
+_SECURITY_TOOL_NAME_RE = re.compile(
+    r"(scanner|scan|audit|auditor|guard|shield|defender|firewall|blocker|"
+    r"lint|sentinel|monitor|watcher|protection|detection|sentry|"
+    r"vet|vetter|fence|safe|safety|gatekeeper|patrol)",
+    re.IGNORECASE,
+)
+
+
+def annotate_security_tool_name(
+    findings: list[Finding],
+    skill: ParsedSkill,
+) -> list[Finding]:
+    """Add context_note when skill name matches security tool patterns.
+
+    Does NOT change severity or confidence — annotation only.
+    Analysts see the note during triage to quickly identify likely FPs.
+    """
+    name = skill.metadata.name or ""
+    if not _SECURITY_TOOL_NAME_RE.search(name):
+        return findings
+
+    note = (
+        f'Skill name "{name}" matches security tool pattern. '
+        f"Verify whether flagged patterns are detection signatures or instructions."
+    )
+
+    for finding in findings:
+        # Don't overwrite existing context_note from confidence adjustment
+        if finding.context_note:
+            finding.context_note = f"{finding.context_note} {note}"
+        else:
+            finding.context_note = note
 
     return findings

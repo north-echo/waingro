@@ -6,6 +6,13 @@ from waingro.models import Finding, FindingCategory, ParsedSkill, Severity
 from waingro.rules import Rule, register_rule, search_skill_content
 
 # Patterns that look like base64 but are actually common non-malicious content
+_GENERATED_FILE_NAMES = {
+    "package-lock.json", "yarn.lock", "pnpm-lock.yaml", "pnpm-lock.json",
+    "composer.lock", "Gemfile.lock", "Cargo.lock", "poetry.lock",
+    "Pipfile.lock", "bun.lockb",
+}
+
+# Patterns that look like base64 but are actually common non-malicious content
 _BASE64_EXCLUSIONS = [
     re.compile(r"^[0-9a-fA-F]+$"),                          # Pure hex (SHA, commit hashes)
     re.compile(r"^0x[0-9a-fA-F]+$"),                         # Ethereum/blockchain addresses
@@ -36,6 +43,8 @@ class Base64Strings(Rule):
         findings = []
         for matched, line, fpath in search_skill_content(skill, self._patterns):
             if _is_excluded_base64(matched):
+                continue
+            if fpath.name in _GENERATED_FILE_NAMES:
                 continue
             findings.append(Finding(
                 rule_id=self.rule_id,

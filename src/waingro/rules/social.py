@@ -35,6 +35,14 @@ def _load_known_packages() -> set[str]:
 
 KNOWN_GOOD_PACKAGES = _load_known_packages()
 
+_TRUSTED_SCOPES = re.compile(
+    r"^@(types|babel|angular|vue|react|next|nuxt|svelte|testing-library|"
+    r"typescript-eslint|eslint|prettier|rollup|vitejs|emotion|mui|"
+    r"chakra-ui|radix-ui|tanstack|trpc|prisma|nestjs|apollo|graphql-tools|"
+    r"aws-sdk|azure|google-cloud|vercel|cloudflare|supabase|firebase)/",
+    re.IGNORECASE,
+)
+
 
 @register_rule
 class FakeDependency(Rule):
@@ -69,6 +77,8 @@ class FakeDependency(Rule):
                 if m:
                     pkg = m.group(1).lower().rstrip("/")
                     if pkg not in KNOWN_GOOD_PACKAGES:
+                        if _TRUSTED_SCOPES.match(pkg):
+                            continue
                         findings.append(Finding(
                             rule_id=self.rule_id,
                             title=self.title,

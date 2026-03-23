@@ -39,20 +39,29 @@ class CredentialFileAccess(Rule):
     _doc_context_re = re.compile(
         r"example|template|sample|documentation|configure|tutorial|"
         r"\.env\.example|\.env\.template|\.env\.sample|"
-        r"translation\.key|localization\.key|cache\.key|primary\.key",
+        r"translation\.key|localization\.key|cache\.key|primary\.key|"
+        r"README|\bconfig\b(?!/)|\bsetup\b(?!/)|CERTIFICATE|-----BEGIN|ssl_cert|tls_cert",
         re.IGNORECASE,
     )
 
     def evaluate(self, skill: ParsedSkill) -> list[Finding]:
         findings = []
         for matched, line_num, fpath in search_skill_content(skill, self._patterns):
-            # Get the full line for context checking
+            # Get full line for context checking
+            full_line = ""
             if fpath.name == "SKILL.md" and line_num:
                 lines = skill.body.split("\n")
                 idx = line_num - 1
                 full_line = lines[idx] if 0 <= idx < len(lines) else ""
-                if self._doc_context_re.search(full_line):
-                    continue
+            else:
+                for bf in skill.bundled_content:
+                    if bf.path == fpath and line_num:
+                        bf_lines = bf.content.split("\n")
+                        idx = line_num - 1
+                        full_line = bf_lines[idx] if 0 <= idx < len(bf_lines) else ""
+                        break
+            if full_line and self._doc_context_re.search(full_line):
+                continue
             findings.append(Finding(
                 rule_id=self.rule_id,
                 title=self.title,

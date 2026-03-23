@@ -107,6 +107,51 @@ def test_exec_005_clean(make_inline_skill):
     assert len(findings) == 0
 
 
+def test_exec_002_high_confidence_with_subprocess(make_inline_skill):
+    """EXEC-002 stays high confidence when subprocess is nearby."""
+    skill = make_inline_skill(
+        body="",
+        bundled={
+            "scripts/run.py": (
+                "import subprocess\n"
+                "import base64\n"
+                "cmd = base64.b64decode(encoded)\n"
+                "subprocess.run(cmd, shell=True)\n"
+            ),
+        },
+    )
+    findings = Base64Execution().evaluate(skill)
+    assert len(findings) >= 1
+    assert findings[0].confidence >= 0.8
+
+
+def test_exec_002_low_confidence_without_exec_context(make_inline_skill):
+    """EXEC-002 lowers confidence when no execution indicators are nearby."""
+    skill = make_inline_skill(
+        body="",
+        bundled={
+            "scripts/data.py": (
+                "import base64\n"
+                "import json\n"
+                "data = base64.b64decode(encoded_config)\n"
+                "config = json.loads(data)\n"
+                "print(config['name'])\n"
+            ),
+        },
+    )
+    findings = Base64Execution().evaluate(skill)
+    assert len(findings) >= 1
+    assert findings[0].confidence < 0.5
+
+
+def test_exec_002_pipe_to_shell_always_critical(make_inline_skill):
+    """EXEC-002 always flags base64 -d | bash at full confidence."""
+    skill = make_inline_skill(body="echo payload | base64 -d | bash")
+    findings = Base64Execution().evaluate(skill)
+    assert len(findings) >= 1
+    assert findings[0].confidence == 1.0
+
+
 def test_exec_006_hidden_py(make_inline_skill):
     """EXEC-006 detects os.system with URL in bundled Python script."""
     skill = make_inline_skill(

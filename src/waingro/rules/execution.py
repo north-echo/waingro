@@ -42,6 +42,14 @@ class CurlPipeShell(Rule):
         return findings
 
 
+_EXEC_INDICATORS = re.compile(
+    r"subprocess|os\.system|os\.popen|child_process|\.exec\(|\.execSync\(|"
+    r"shell\s*=\s*True|eval\s*\(|\|\s*(bash|sh|zsh)|spawn\(|"
+    r"Popen|system\(|passthru|proc_open",
+    re.IGNORECASE,
+)
+
+
 @register_rule
 class Base64Execution(Rule):
     rule_id = "EXEC-002"
@@ -55,9 +63,55 @@ class Base64Execution(Rule):
         re.compile(r"Buffer\.from\s*\([^)]+,\s*['\"]base64['\"]\)"),
     ]
 
+    _pipe_to_shell = re.compile(
+        r"base64\s+(-d|--decode)\s*\|\s*(bash|sh|zsh)", re.IGNORECASE,
+    )
+
+    def _get_context_lines(self, skill: ParsedSkill, fpath, line_num, window=10):
+        """Get up to *window* lines before and after the match."""
+        if fpath.name == "SKILL.md":
+            lines = skill.body.split("\n")
+        else:
+            for bf in skill.bundled_content:
+                if bf.path == fpath:
+                    lines = bf.content.split("\n")
+                    break
+            else:
+                return []
+        start = max(0, (line_num or 1) - 1 - window)
+        end = min(len(lines), (line_num or 1) + window)
+        return lines[start:end]
+
     def evaluate(self, skill: ParsedSkill) -> list[Finding]:
         findings = []
         for matched, line, fpath in search_skill_content(skill, self._patterns):
+            # --- context-window confidence adjustment ---
+            context_lines = self._get_context_lines(skill, fpath, line)
+            context_text = "\n".join(context_lines)
+            indicator_matches = _EXEC_INDICATORS.findall(context_text)
+            indicator_count = len(indicator_matches)
+
+            if indicator_count >= 2:
+                confidence = 1.0
+                context_note = None
+            elif indicator_count == 1:
+                confidence = 0.8
+                context_note = (
+                    "Base64 decode near 1 execution indicator in context window. "
+                    "Verify intent."
+                )
+            else:
+                confidence = 0.4
+                context_note = (
+                    "Base64 decode with no execution indicators in surrounding "
+                    "\u00b110 lines. Likely data processing, not command execution."
+                )
+
+            # Pipe-to-shell IS the execution context — always full confidence
+            if self._pipe_to_shell.search(matched):
+                confidence = 1.0
+                context_note = None
+
             findings.append(Finding(
                 rule_id=self.rule_id,
                 title=self.title,
@@ -69,6 +123,8 @@ class Base64Execution(Rule):
                 matched_content=matched[:200],
                 remediation="Decode and inspect base64 content before execution.",
                 reference=CLAWHAVOC_REF,
+                confidence=confidence,
+                context_note=context_note,
             ))
         return findings
 
