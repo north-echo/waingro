@@ -51,10 +51,13 @@ class FakeDependency(Rule):
     description = "Detects instructions to install potentially fake packages"
 
     _install_patterns = [
-        re.compile(r"npm\s+install\s+(?:-g\s+)?([a-z0-9@._/-]+)", re.IGNORECASE),
-        re.compile(r"pip\s+install\s+([a-z0-9._-]+)", re.IGNORECASE),
-        re.compile(r"brew\s+install\s+([a-z0-9._-]+)", re.IGNORECASE),
-        re.compile(r"brew\s+tap\s+[^\s]+\s*&&\s*brew\s+install\s+([a-z0-9._-]+)", re.IGNORECASE),
+        re.compile(r"npm\s+install\s+(?:-[gGSD]\s+)*([a-z@][a-z0-9@._/-]+)", re.IGNORECASE),
+        re.compile(r"pip\s+install\s+(?:-[^\s]+\s+)*([a-z][a-z0-9._-]+)", re.IGNORECASE),
+        re.compile(r"brew\s+install\s+(?:--[a-z-]+\s+)*([a-z][a-z0-9._-]+)", re.IGNORECASE),
+        re.compile(
+            r"brew\s+tap\s+[^\s]+\s*&&\s*brew\s+install\s+([a-z][a-z0-9._-]+)",
+            re.IGNORECASE,
+        ),
     ]
 
     def evaluate(self, skill: ParsedSkill) -> list[Finding]:
@@ -76,6 +79,11 @@ class FakeDependency(Rule):
                 m = pat.search(line_text)
                 if m:
                     pkg = m.group(1).lower().rstrip("/")
+                    # Skip file references (pip install -r requirements.txt)
+                    if "." in pkg and pkg.rsplit(".", 1)[-1] in (
+                        "txt", "cfg", "toml", "in", "lock", "yml", "yaml",
+                    ):
+                        continue
                     if pkg not in KNOWN_GOOD_PACKAGES:
                         if _TRUSTED_SCOPES.match(pkg):
                             continue

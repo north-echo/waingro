@@ -1,6 +1,7 @@
 """Exfiltration rules: detect credential theft and data scraping patterns."""
 
 import re
+from pathlib import Path
 
 from waingro.models import Finding, FindingCategory, ParsedSkill, Severity
 from waingro.rules import Rule, register_rule, search_skill_content
@@ -44,6 +45,31 @@ class CredentialFileAccess(Rule):
         re.IGNORECASE,
     )
 
+    # API documentation context: Authorization: Bearer in curl examples / HTTP docs
+    _api_doc_re = re.compile(
+        r"curl\s|https?://|--header|Content-Type|application/json|"
+        r"-X\s+(GET|POST|PUT|PATCH|DELETE)|fetch\(|"
+        r"api\.|/api/|/v[0-9]+/|endpoint",
+        re.IGNORECASE,
+    )
+
+    def _get_nearby_lines(
+        self, skill: ParsedSkill, fpath: Path, line_num: int, window: int = 5,
+    ) -> str:
+        """Get text from +/-window lines around a match for context checking."""
+        if fpath.name == "SKILL.md":
+            lines = skill.body.split("\n")
+        else:
+            for bf in skill.bundled_content:
+                if bf.path == fpath:
+                    lines = bf.content.split("\n")
+                    break
+            else:
+                return ""
+        start = max(0, line_num - 1 - window)
+        end = min(len(lines), line_num + window)
+        return "\n".join(lines[start:end])
+
     def evaluate(self, skill: ParsedSkill) -> list[Finding]:
         findings = []
         for matched, line_num, fpath in search_skill_content(skill, self._patterns):
@@ -62,6 +88,12 @@ class CredentialFileAccess(Rule):
                         break
             if full_line and self._doc_context_re.search(full_line):
                 continue
+            # Suppress Authorization: Bearer in API documentation context
+            # Check current line and surrounding ±5 lines (curl commands span multiple lines)
+            if "Authorization" in matched and line_num:
+                context = self._get_nearby_lines(skill, fpath, line_num, window=5)
+                if self._api_doc_re.search(context):
+                    continue
             findings.append(Finding(
                 rule_id=self.rule_id,
                 title=self.title,

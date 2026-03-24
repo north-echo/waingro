@@ -17,6 +17,29 @@ def test_social_001_clean(clean_basic_skill):
     assert len(findings) == 0
 
 
+def test_social_001_ignores_flags_and_file_refs(make_inline_skill):
+    """SOCIAL-001 does not flag flags, file references, or known packages."""
+    skill = make_inline_skill(
+        body=(
+            "pip install -r requirements.txt\n"
+            "pip install --upgrade requests\n"
+            "npm install --save-dev jest\n"
+            "brew install --cask wget\n"
+        )
+    )
+    findings = FakeDependency().evaluate(skill)
+    # requirements.txt is a file ref, requests/jest/wget are known-good
+    assert len(findings) == 0
+
+
+def test_social_001_catches_unknown_package(make_inline_skill):
+    """SOCIAL-001 still catches genuinely unknown packages."""
+    skill = make_inline_skill(body="pip install evil-backdoor-pkg")
+    findings = FakeDependency().evaluate(skill)
+    assert len(findings) >= 1
+    assert "evil-backdoor-pkg" in findings[0].remediation
+
+
 def test_social_003_npm_preinstall_hook(make_inline_skill):
     """SOCIAL-003 detects npm preinstall hooks with shell execution."""
     skill = make_inline_skill(

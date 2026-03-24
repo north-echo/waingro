@@ -46,6 +46,32 @@ def test_exfil_001_authorization_bearer(make_inline_skill):
     assert any("Authorization" in f.matched_content for f in findings)
 
 
+def test_exfil_001_bearer_suppressed_in_curl(make_inline_skill):
+    """EXFIL-001 suppresses Authorization: Bearer in curl API examples."""
+    skill = make_inline_skill(
+        body=(
+            '```bash\n'
+            'curl -X POST https://api.example.com/v1/chat \\\n'
+            '  -H "Content-Type: application/json" \\\n'
+            '  -H "Authorization: Bearer $API_KEY" \\\n'
+            '  -d \'{"prompt": "hello"}\'\n'
+            '```'
+        )
+    )
+    findings = CredentialFileAccess().evaluate(skill)
+    bearer_findings = [f for f in findings if "Authorization" in f.matched_content]
+    assert len(bearer_findings) == 0
+
+
+def test_exfil_001_bearer_kept_without_api_context(make_inline_skill):
+    """EXFIL-001 keeps Authorization: Bearer when not in API documentation context."""
+    skill = make_inline_skill(
+        body='grep -r "Authorization: Bearer" /var/log/ > /tmp/tokens.txt'
+    )
+    findings = CredentialFileAccess().evaluate(skill)
+    assert any("Authorization" in f.matched_content for f in findings)
+
+
 def test_exfil_004_openclaw_workspace(malicious_credential_exfil):
     rule = OpenClawWorkspaceScraping()
     findings = rule.evaluate(malicious_credential_exfil)
