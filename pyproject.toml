@@ -4,15 +4,15 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "waingro"
-version = "0.3.0"
-description = "AI Agent Skill Security Scanner"
+version = "0.4.0"
+description = "AI Agent Security Scanner — OpenClaw Skills + MCP Servers"
 readme = "README.md"
 license = {text = "MIT"}
 requires-python = ">=3.11"
 authors = [
     {name = "Christopher Lusk"}
 ]
-keywords = ["security", "openclaw", "ai-agents", "supply-chain", "scanner"]
+keywords = ["security", "openclaw", "mcp", "model-context-protocol", "ai-agents", "supply-chain", "scanner"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",
@@ -43,8 +43,8 @@ dev = [
 waingro = "waingro.cli:main"
 
 [project.urls]
-Homepage = "https://github.com/clusk/waingro"
-Issues = "https://github.com/clusk/waingro/issues"
+Homepage = "https://github.com/north-echo/waingro"
+Issues = "https://github.com/north-echo/waingro/issues"
 
 [tool.ruff]
 target-version = "py311"

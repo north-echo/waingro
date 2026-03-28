@@ -22,6 +22,10 @@ class FindingCategory(StrEnum):
     INJECTION = "injection"
     SOCIAL_ENGINEERING = "social-engineering"
     TYPOSQUATTING = "typosquatting"
+    # MCP-specific categories
+    SUPPLY_CHAIN = "supply-chain"
+    SCOPE_ESCALATION = "scope-escalation"
+    CROSS_TOOL = "cross-tool"
 
 
 @dataclass

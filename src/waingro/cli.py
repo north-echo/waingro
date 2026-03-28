@@ -131,3 +131,122 @@ def audit(
 def version() -> None:
     """Print version information."""
     click.echo(f"waingro {__version__}")
+
+
+# ── MCP subcommand group ──────────────────────────────────────────────
+
+
+@main.group()
+def mcp() -> None:
+    """MCP server ecosystem scanner."""
+
+
+@mcp.command("scan")
+@click.argument("path", type=click.Path(exists=True, path_type=Path))
+@click.option("-f", "--format", "fmt", type=click.Choice(["console", "json"]), default="console")
+@click.option(
+    "-s", "--severity", "min_severity",
+    type=click.Choice(list(SEVERITY_MAP.keys())), default="low",
+)
+@click.option("--fail-on", type=click.Choice(["critical", "high", "medium", "low"]), default=None)
+def mcp_scan(path: Path, fmt: str, min_severity: str, fail_on: str | None) -> None:
+    """Scan an MCP server directory for security issues."""
+    from waingro.mcp.scanner import scan_server as mcp_scan_server
+
+    result = mcp_scan_server(path)
+
+    min_sev = SEVERITY_MAP[min_severity]
+    result.findings = [f for f in result.findings if _severity_at_or_above(f.severity, min_sev)]
+
+    if fmt == "json":
+        import json as _json
+        output = {
+            "server": str(result.server_path),
+            "name": result.metadata.name,
+            "version": result.metadata.version,
+            "verdict": result.verdict,
+            "files_scanned": result.files_scanned,
+            "rules_evaluated": result.rules_evaluated,
+            "findings": [
+                {
+                    "rule_id": f.rule_id,
+                    "title": f.title,
+                    "severity": f.severity.value,
+                    "category": f.category.value,
+                    "file": str(f.file_path),
+                    "line": f.line_number,
+                    "matched": f.matched_content,
+                    "confidence": f.confidence,
+                }
+                for f in result.findings
+            ],
+        }
+        click.echo(_json.dumps(output, indent=2))
+    else:
+        color = {"MALICIOUS": "red", "SUSPICIOUS": "yellow", "WARNING": "yellow",
+                 "REVIEW": "blue", "CLEAN": "green"}.get(result.verdict, "white")
+        click.echo(f"\n{'='*60}")
+        click.echo(f"{result.metadata.name} ({result.metadata.version or 'unknown'})")
+        click.echo(f"  Verdict: {click.style(result.verdict, fg=color)}")
+        click.echo(f"  Files:   {result.files_scanned}")
+        click.echo(f"  Tools:   {len(result.metadata.tools)}")
+        if result.findings:
+            click.echo(f"  Findings ({len(result.findings)}):")
+            sev_order = ["critical", "high", "medium", "low", "info"]
+            for f in sorted(result.findings, key=lambda x: sev_order.index(x.severity.value)):
+                conf = f" (conf={f.confidence:.1f})" if f.confidence < 1.0 else ""
+                click.echo(f"    [{f.severity.value.upper():8s}] {f.rule_id}: {f.title}{conf}")
+                click.echo(f"             {f.matched_content[:80]}")
+        click.echo()
+
+    if fail_on:
+        fail_sev = SEVERITY_MAP[fail_on]
+        if any(_severity_at_or_above(f.severity, fail_sev) for f in result.findings):
+            sys.exit(1)
+
+
+@mcp.command("batch")
+@click.argument("manifest", type=click.Path(exists=True, path_type=Path))
+@click.option("--clone-dir", type=click.Path(path_type=Path), default=Path("cloned-servers"))
+@click.option("--results", type=click.Path(path_type=Path), default=Path("batch-results.json"))
+@click.option("--max", "max_servers", type=int, default=0, help="Max servers to scan (0=all)")
+@click.option("--min-stars", type=int, default=0)
+@click.option("--cleanup", is_flag=True, help="Delete repos after scanning")
+def mcp_batch(
+    manifest: Path, clone_dir: Path, results: Path,
+    max_servers: int, min_stars: int, cleanup: bool,
+) -> None:
+    """Batch clone + scan MCP servers from a discovery manifest."""
+    from waingro.mcp.batch import BatchConfig, run_batch_scan
+
+    config = BatchConfig(
+        manifest_path=manifest,
+        clone_dir=clone_dir,
+        results_path=results,
+        max_servers=max_servers,
+        min_stars=min_stars,
+        cleanup_after_scan=cleanup,
+    )
+    result = run_batch_scan(config)
+
+    if result.verdict_counts.get("MALICIOUS", 0) > 0:
+        sys.exit(2)
+    elif result.verdict_counts.get("SUSPICIOUS", 0) > 0:
+        sys.exit(1)
+
+
+@mcp.command("discover")
+@click.option("--awesome", type=click.Path(exists=True, path_type=Path), help="awesome-mcp-servers README.md")
+@click.option("--no-npm", is_flag=True)
+@click.option("--no-github", is_flag=True)
+@click.option("-o", "--output", type=click.Path(path_type=Path), default=Path("discovery-manifest.json"))
+def mcp_discover(awesome: Path | None, no_npm: bool, no_github: bool, output: Path) -> None:
+    """Discover MCP servers from npm, GitHub, and awesome lists."""
+    from waingro.mcp.discovery import run_discovery
+
+    run_discovery(
+        awesome_readme=awesome,
+        include_npm=not no_npm,
+        include_github=not no_github,
+        output_path=output,
+    )
