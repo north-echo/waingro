@@ -71,6 +71,7 @@ class ParsedSkill:
     bundled_files: list[Path] = field(default_factory=list)
     bundled_content: list[BundledFileContent] = field(default_factory=list)
     sections: list = field(default_factory=list)  # list[MarkdownSection]
+    frontmatter_lines: int = 0  # lines consumed by YAML frontmatter, for line-number offset
 
 
 @dataclass
