@@ -3,7 +3,7 @@
 import re
 
 from waingro.models import Finding, FindingCategory, ParsedSkill, Severity
-from waingro.rules import Rule, register_rule, search_skill_content
+from waingro.rules import Rule, register_rule, search_skill_content, search_skill_content_lines
 
 CLAWHAVOC_REF = "ClawHavoc campaign (Bitdefender, Feb 2026)"
 
@@ -200,22 +200,48 @@ class HexEncodedExecution(Rule):
     title = "Hex-encoded command execution"
     description = "Detects hex-decoded content used to construct and execute commands"
 
-    _patterns = [
+    # Explicit hex-decode calls. These name the decode step outright.
+    _decode_patterns = [
         re.compile(r"bytes\.fromhex\s*\("),
         re.compile(r"xxd\s+-r\s+-p"),
         re.compile(r"echo\s+[\"'][0-9a-fA-F]+[\"']\s*\|\s*xxd\s+-r"),
-        re.compile(r"\\x[0-9a-fA-F]{2}(?!.*\\x1b\[).*\\x[0-9a-fA-F]{2}"),
     ]
+
+    # Bare hex escapes. Two of these on a line says nothing on its own: it is
+    # equally a control-character regex class, a unit test, or a minified
+    # bundle. Only report them when the same line also executes something.
+    _escape_pattern = re.compile(r"\\x[0-9a-fA-F]{2}.*\\x[0-9a-fA-F]{2}")
+
+    _exec_sink = re.compile(
+        r"\b(?:eval|exec|execSync|spawn|spawnSync|system|popen|Function|"
+        r"child_process|subprocess|os\.system|iex|invoke-expression)\b",
+        re.IGNORECASE,
+    )
 
     # ANSI escape sequences (terminal colors) that look like hex
     _ansi_re = re.compile(r"\\x1b\[")
 
     def evaluate(self, skill: ParsedSkill) -> list[Finding]:
         findings = []
-        for matched, line, fpath in search_skill_content(skill, self._patterns):
+        seen: set[tuple[str, int | None]] = set()
+        for matched, line, fpath, source_line in search_skill_content_lines(
+            skill, self._decode_patterns + [self._escape_pattern],
+        ):
             # Skip ANSI escape code false positives
             if self._ansi_re.search(matched):
                 continue
+
+            is_explicit_decode = any(p.search(matched) for p in self._decode_patterns)
+            if not is_explicit_decode and not self._exec_sink.search(source_line):
+                # Hex escapes with nothing executing them. Machine-obfuscated
+                # bundles are reported once per file by OBFUSC-003 instead.
+                continue
+
+            key = (str(fpath), line)
+            if key in seen:
+                continue
+            seen.add(key)
+
             findings.append(Finding(
                 rule_id=self.rule_id,
                 title=self.title,

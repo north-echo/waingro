@@ -67,23 +67,51 @@ def _is_non_executable_line(line: str, file_path: Path | None = None) -> bool:
     return bool(_STRING_CONTEXT_RE.match(line.lstrip()))
 
 
-def search_skill_content(
-    skill: ParsedSkill, patterns: list[re.Pattern],
-) -> list[tuple[str, int | None, Path]]:
-    """Search body, code blocks, and bundled files for pattern matches.
+def code_block_body_lines(skill: ParsedSkill) -> set[int]:
+    """Return 1-based *body* line numbers already covered by ``skill.code_blocks``.
 
-    Skips comment lines and string-literal contexts in bundled scripts.
-    Returns (matched_text, line_number, file_path) tuples.
+    Fenced-block content is searched separately via ``skill.code_blocks``;
+    scanning the same lines again in the body pass reports every match twice.
+    Spans are derived from the blocks themselves rather than by re-scanning for
+    fences, so a hand-built ParsedSkill whose ``code_blocks`` is empty keeps
+    full body coverage, and an unterminated fence (which yields no block) is
+    still searched.
     """
-    hits: list[tuple[str, int | None, Path]] = []
+    covered: set[int] = set()
+    offset = skill.frontmatter_lines
+    for block in skill.code_blocks:
+        start = block.get("line")
+        if start is None:
+            continue
+        n_lines = len(block["content"].split("\n"))
+        # block["line"] is file-relative; convert back to body coordinates.
+        body_start = start - offset
+        covered.update(range(body_start, body_start + n_lines))
+    return covered
+
+
+def search_skill_content_lines(
+    skill: ParsedSkill, patterns: list[re.Pattern],
+) -> list[tuple[str, int | None, Path, str]]:
+    """Like :func:`search_skill_content` but also returns the full source line.
+
+    Rules that need surrounding context (for example, deciding whether an
+    encoded blob sits next to a decode-and-execute sink) should use this.
+    """
+    hits: list[tuple[str, int | None, Path, str]] = []
     skill_md = skill.path / "SKILL.md"
 
-    # Search body (markdown — no comment filtering)
+    # Search body (markdown — no comment filtering). Fenced blocks are skipped
+    # here because they are searched separately below via skill.code_blocks.
+    covered = code_block_body_lines(skill)
+    offset = skill.frontmatter_lines
     for i, line in enumerate(skill.body.split("\n"), start=1):
+        if i in covered:
+            continue
         for pat in patterns:
             m = pat.search(line)
             if m:
-                hits.append((m.group(0), i, skill_md))
+                hits.append((m.group(0), i + offset, skill_md, line))
 
     # Search code blocks (inside SKILL.md — no comment filtering,
     # these are agent instructions)
@@ -92,7 +120,7 @@ def search_skill_content(
             for pat in patterns:
                 m = pat.search(line)
                 if m:
-                    hits.append((m.group(0), block["line"] + j, skill_md))
+                    hits.append((m.group(0), block["line"] + j, skill_md, line))
 
     # Search bundled file content (with comment/string-literal filtering)
     for bf in skill.bundled_content:
@@ -102,6 +130,29 @@ def search_skill_content(
             for pat in patterns:
                 m = pat.search(line)
                 if m:
-                    hits.append((m.group(0), k, bf.path))
+                    hits.append((m.group(0), k, bf.path, line))
 
-    return hits
+    # Collapse identical (text, line, file) hits produced by overlapping
+    # patterns within the same rule, preserving first-seen order.
+    seen: set[tuple[str, int | None, Path]] = set()
+    deduped: list[tuple[str, int | None, Path, str]] = []
+    for hit in hits:
+        key = hit[:3]
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(hit)
+    return deduped
+
+
+def search_skill_content(
+    skill: ParsedSkill, patterns: list[re.Pattern],
+) -> list[tuple[str, int | None, Path]]:
+    """Search body, code blocks, and bundled files for pattern matches.
+
+    Skips comment lines and string-literal contexts in bundled scripts.
+    Returns (matched_text, line_number, file_path) tuples. Line numbers for
+    SKILL.md are file-relative (frontmatter included). Duplicate hits for the
+    same rule at the same location are collapsed.
+    """
+    return [(m, ln, fp) for m, ln, fp, _line in search_skill_content_lines(skill, patterns)]

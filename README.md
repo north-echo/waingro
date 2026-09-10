@@ -46,7 +46,7 @@ waingro mcp batch manifest.json --results results.json --cleanup
 
 ## Detection Coverage
 
-### OpenClaw Rules (30 rules)
+### OpenClaw Rules (31 rules)
 
 | Rule ID | Category | Severity | Description | Reference |
 |---------|----------|----------|-------------|-----------|
@@ -54,7 +54,7 @@ waingro mcp batch manifest.json --results results.json --cleanup
 | EXEC-002 | Execution | CRITICAL | Base64-encoded command execution | ClawHavoc |
 | EXEC-003 | Execution | HIGH | eval/exec with dynamic content | — |
 | EXEC-004 | Execution | CRITICAL | PowerShell download cradles | — |
-| EXEC-005 | Execution | CRITICAL | Hex-encoded command execution | — |
+| EXEC-005 | Execution | CRITICAL | Hex-decoded command execution | — |
 | EXEC-006 | Execution | CRITICAL | Hidden execution in bundled scripts | Polymarket trojan |
 | EXFIL-001 | Exfiltration | HIGH | Credential file access | Bitdefender |
 | EXFIL-002 | Exfiltration | CRITICAL | macOS Keychain access | — |
@@ -71,8 +71,9 @@ waingro mcp batch manifest.json --results results.json --cleanup
 | NET-002 | Network | CRITICAL | Known malicious infrastructure | Bitdefender |
 | NET-003 | Network | HIGH | Tunnel/proxy setup | — |
 | NET-004 | Network | CRITICAL | DNS data exfiltration | — |
-| OBFUSC-001 | Obfuscation | MEDIUM | Base64 encoded strings | — |
+| OBFUSC-001 | Obfuscation | LOW–CRITICAL | Base64 blobs, graded by decode/exec sink | — |
 | OBFUSC-002 | Obfuscation | MEDIUM | String concatenation tricks | — |
+| OBFUSC-003 | Obfuscation | HIGH | Machine-obfuscated bundled code | — |
 | INJECT-001 | Injection | HIGH | Prompt injection patterns | — |
 | INJECT-002 | Injection | CRITICAL | Jailbreak/DAN patterns | — |
 | INJECT-003 | Injection | CRITICAL | Metadata injection | — |
@@ -103,6 +104,19 @@ Mapped to [OWASP MCP Top 10](https://owasp.org/www-project-mcp-top-10/) and [Adv
 | MCP-014 | Network | HIGH | Unsafe network binding (NeighborJack) | Adversa #13 |
 | MCP-015 | Injection | MEDIUM | Resource content poisoning surface | Adversa #18 |
 | MCP-016 | Supply chain | HIGH | Package name typosquatting | Adversa #14 |
+
+## Reporting model
+
+Findings are graded and aggregated rather than counted per matching line.
+
+- Encoded content is decoded before it is reported. A blob that is not valid
+  base64, or that decodes to an image, font or hash, is not a finding.
+- Severity follows the sink on the same line. Decoded and executed outranks
+  decoded, which outranks a blob nobody touches.
+- Repeats collapse. Many hits of one rule in one file become one finding with
+  an occurrence count; a rule firing across four or more files becomes one
+  skill-level finding. Nothing is discarded, and severity carries the maximum
+  seen in the group.
 
 ## Research
 

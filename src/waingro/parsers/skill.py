@@ -28,7 +28,12 @@ def parse_frontmatter(content: str) -> tuple[dict, str]:
 
 
 def extract_code_blocks(content: str, start_line_offset: int = 0) -> list[dict]:
-    """Extract fenced code blocks with language and line numbers."""
+    """Extract fenced code blocks with language and line numbers.
+
+    ``line`` is the 1-based line of the block's *first content line* (the line
+    after the opening fence), already shifted by ``start_line_offset`` so it is
+    file-relative. Consumers index content lines as ``block["line"] + j``.
+    """
     blocks = []
     lines = content.split("\n")
     in_block = False
@@ -41,7 +46,7 @@ def extract_code_blocks(content: str, start_line_offset: int = 0) -> list[dict]:
             in_block = True
             block_lang = line[3:].strip()
             block_lines = []
-            block_start = i + 1 + start_line_offset
+            block_start = i + 2 + start_line_offset  # first line after the fence
         elif in_block and line.startswith("```"):
             blocks.append({
                 "language": block_lang,
@@ -102,4 +107,5 @@ def parse_skill(path: Path) -> ParsedSkill:
         code_blocks=code_blocks,
         bundled_files=bundled_files,
         sections=sections,
+        frontmatter_lines=fm_lines,
     )
