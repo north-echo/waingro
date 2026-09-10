@@ -3,6 +3,13 @@
 import re
 
 from waingro.models import Finding, FindingCategory, ParsedSkill, Severity
+from waingro.analyzers.reputation import (
+    USERCONTENT,
+    VENDOR,
+    classify_text,
+    is_first_party,
+    skill_identifiers,
+)
 from waingro.rules import Rule, register_rule, search_skill_content, search_skill_content_lines
 
 CLAWHAVOC_REF = "ClawHavoc campaign (Bitdefender, Feb 2026)"
@@ -23,12 +30,26 @@ class CurlPipeShell(Rule):
 
     def evaluate(self, skill: ParsedSkill) -> list[Finding]:
         findings = []
-        for matched, line, fpath in search_skill_content(skill, self._patterns):
+        idents = skill_identifiers(skill)
+        for matched, line, fpath, source_line in search_skill_content_lines(
+            skill, self._patterns,
+        ):
+            # Grade by who controls the bytes on the other end of the pipe.
+            tier = classify_text(source_line)
+            if tier == VENDOR or is_first_party(source_line, idents):
+                continue
+            severity = Severity.MEDIUM if tier == USERCONTENT else Severity.CRITICAL
+            confidence = 0.5 if tier == USERCONTENT else 1.0
+            note = (
+                "Fetched from a reputable host that serves user-supplied content, "
+                "so the domain says nothing about the script."
+                if tier == USERCONTENT else None
+            )
             findings.append(Finding(
                 rule_id=self.rule_id,
                 title=self.title,
                 description=self.description,
-                severity=Severity.CRITICAL,
+                severity=severity,
                 category=FindingCategory.EXECUTION,
                 file_path=fpath,
                 line_number=line,
@@ -38,6 +59,8 @@ class CurlPipeShell(Rule):
                     "Download files first, inspect them, then execute."
                 ),
                 reference=CLAWHAVOC_REF,
+                confidence=confidence,
+                context_note=note,
             ))
         return findings
 
@@ -285,6 +308,7 @@ class HiddenBundledExecution(Rule):
 
     def evaluate(self, skill: ParsedSkill) -> list[Finding]:
         findings = []
+        idents = skill_identifiers(skill)
         for bf in skill.bundled_content:
             patterns = self._ext_patterns.get(bf.path.suffix)
             if not patterns:
@@ -293,11 +317,26 @@ class HiddenBundledExecution(Rule):
                 for pat in patterns:
                     m = pat.search(line_text)
                     if m:
+                        tier = classify_text(line_text)
+                        if tier == VENDOR or is_first_party(line_text, idents):
+                            # The project's own documented installer, either
+                            # listed or served from the skill's own domain.
+                            # Same syntax as an attack, different claim.
+                            continue
+                        severity = (
+                            Severity.MEDIUM if tier == USERCONTENT else Severity.CRITICAL
+                        )
+                        confidence = 0.5 if tier == USERCONTENT else 1.0
+                        note = (
+                            "Fetched from a reputable host that serves user-supplied "
+                            "content, so the domain says nothing about the script."
+                            if tier == USERCONTENT else None
+                        )
                         findings.append(Finding(
                             rule_id=self.rule_id,
                             title=self.title,
                             description=f"Hidden execution in bundled {bf.path.name}",
-                            severity=Severity.CRITICAL,
+                            severity=severity,
                             category=FindingCategory.EXECUTION,
                             file_path=bf.path,
                             line_number=k,
@@ -307,5 +346,7 @@ class HiddenBundledExecution(Rule):
                                 "calls with URLs or IP addresses."
                             ),
                             reference="Polymarket trojan pattern",
+                            confidence=confidence,
+                            context_note=note,
                         ))
         return findings

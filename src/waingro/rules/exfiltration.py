@@ -7,6 +7,35 @@ from waingro.models import Finding, FindingCategory, ParsedSkill, Severity
 from waingro.rules import Rule, register_rule, search_skill_content
 
 
+# A skill touching its own workspace is doing its job. The Bitdefender pattern
+# is reading that data and sending it somewhere. Without a destination in the
+# same file, a path match is a description, not an exfiltration.
+_EXFIL_SINK = re.compile(
+    r"""(?:
+        curl\s|wget\s|https?://                 # outbound fetch/post
+      | requests\.(?:post|put|patch)
+      | urllib\.request|httpx\.|aiohttp
+      | fetch\s*\(|axios\.|XMLHttpRequest
+      | nc\s+-|netcat|socket\.
+      | webhook|discord\.com/api|hooks\.slack
+      | \bmail\b|sendmail|smtplib
+      | base64\s+(?:-w\s*0|--wrap)             # encode-then-send shape
+    )""",
+    re.IGNORECASE | re.VERBOSE,
+)
+
+
+def _file_has_exfil_sink(skill: ParsedSkill, fpath) -> bool:
+    """True if the file containing a hit also contains an outbound destination."""
+    name = str(fpath)
+    if fpath.name == "SKILL.md":
+        haystack = skill.body
+    else:
+        haystack = next(
+            (bf.content for bf in skill.bundled_content if str(bf.path) == name), ""
+        )
+    return bool(_EXFIL_SINK.search(haystack))
+
 @register_rule
 class CredentialFileAccess(Rule):
     rule_id = "EXFIL-001"
@@ -191,17 +220,24 @@ class OpenClawWorkspaceScraping(Rule):
     def evaluate(self, skill: ParsedSkill) -> list[Finding]:
         findings = []
         for matched, line, fpath in search_skill_content(skill, self._patterns):
+            has_sink = _file_has_exfil_sink(skill, fpath)
             findings.append(Finding(
                 rule_id=self.rule_id,
                 title=self.title,
                 description=self.description,
-                severity=Severity.HIGH,
+                severity=Severity.HIGH if has_sink else Severity.LOW,
                 category=FindingCategory.EXFILTRATION,
                 file_path=fpath,
                 line_number=line,
                 matched_content=matched[:200],
                 remediation="Skills should not access OpenClaw memory or workspace directories.",
                 reference="Bitdefender -- skills scanning OpenClaw memory/workspace dirs",
+                confidence=0.9 if has_sink else 0.25,
+                context_note=(
+                    None if has_sink else
+                    "Workspace path with no outbound destination in the same file. "
+                    "Most skills legitimately store their own files here."
+                ),
             ))
         return findings
 

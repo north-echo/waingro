@@ -138,12 +138,31 @@ class DnsExfiltration(Rule):
     title = "DNS data exfiltration"
     description = "Detects DNS queries used as a covert data exfiltration channel"
 
+    # DNS exfiltration is a lookup tool invoked as a *command*, against a
+    # hostname whose leading label is interpolated data. The previous
+    # `host\s+.*\$...` pattern matched any line containing the word "host"
+    # followed anywhere later by a variable and a dot, which fires on ordinary
+    # prose ("host verification, host reply") and on minified JavaScript.
+    #
+    # Anchoring to command position is what makes this a signal: the tool must
+    # start the line or follow a shell separator, and the data must sit in the
+    # hostname it queries.
+    _CMD_START = r"(?:^|[;&|]\s*|\$\(\s*|`\s*)"
+    # Restricted to characters that can actually appear in a hostname plus
+    # shell interpolation, and required to end in a TLD-shaped label. This is
+    # what keeps `Write-Host "$($x.Count)"` out: `$(` is not a hostname.
+    _ENCODED_LABEL = (
+        r"[A-Za-z0-9._${}-]*\$\{?\w+\}?[A-Za-z0-9._${}-]*\.[A-Za-z]{2,24}\b"
+    )
+
     _patterns = [
-        re.compile(r"dig\s+.*\$\{?\w+\}?\..*\.", re.IGNORECASE),
-        re.compile(r"nslookup\s+.*\$\{?\w+\}?\."),
-        re.compile(r"dig\s+.*\.data\.", re.IGNORECASE),
-        re.compile(r"host\s+.*\$\{?\w+\}?\.", re.IGNORECASE),
-        re.compile(r"fold\s+-w\s+63"),
+        re.compile(_CMD_START + r"dig\s+(?:[+-]\S+\s+)*" + _ENCODED_LABEL, re.IGNORECASE),
+        re.compile(_CMD_START + r"nslookup\s+(?:-\S+\s+)*" + _ENCODED_LABEL, re.IGNORECASE),
+        re.compile(_CMD_START + r"host\s+(?:-\S+\s+)*" + _ENCODED_LABEL, re.IGNORECASE),
+        re.compile(r"\bdig\s+(?:[+-]\S+\s+)*\S*\.data\.", re.IGNORECASE),
+        # Splitting base64 into 63-char chunks is DNS label sizing and has
+        # essentially one purpose.
+        re.compile(r"fold\s+-w\s*63"),
     ]
 
     def evaluate(self, skill: ParsedSkill) -> list[Finding]:

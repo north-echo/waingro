@@ -135,6 +135,16 @@ Findings are graded and aggregated rather than counted per matching line.
   an occurrence count; a rule firing across four or more files becomes one
   skill-level finding. Nothing is discarded, and severity carries the maximum
   seen in the group.
+- Remote fetches are graded by who controls the bytes. `curl https://astral.sh/
+  uv/install.sh | sh` is a documented installer; the same line pointed at an
+  unrecognised host is not. Vendor domains and installers served from the
+  skill's own domain are suppressed, reputable hosts serving user-supplied
+  content are reduced, everything else keeps full severity.
+- An unrecognised package name is informational. It becomes HIGH only when it
+  is one or two edits from a popular package, or claims platform affiliation.
+
+Rule severities are therefore ranges, not constants. `--min-severity` filters
+what you see without changing what was found.
 
 ## Research
 
