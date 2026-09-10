@@ -215,3 +215,63 @@ class StringConcatenation(Rule):
                 reference=None,
             ))
         return findings
+
+# javascript-obfuscator and its relatives rewrite every identifier to _0x…,
+# hoist all strings into a hex-escaped array, and compute array indices with
+# throwaway arithmetic. Any one of those is unremarkable; together, in a file
+# shipped inside a skill, they mean the code was deliberately made unreadable.
+_JS_OBFUSCATOR_MARKERS = (
+    re.compile(r"_0x[0-9a-f]{4,6}"),
+    re.compile(r"\\x[0-9a-fA-F]{2}(?:['\"],\s*['\"])?\\x[0-9a-fA-F]{2}"),
+    re.compile(r"parseInt\s*\(\s*_0x[0-9a-f]+"),
+)
+_JS_EXTENSIONS = {".js", ".mjs", ".cjs", ".ts"}
+
+
+@register_rule
+class MachineObfuscatedBundle(Rule):
+    rule_id = "OBFUSC-003"
+    title = "Machine-obfuscated bundled code"
+    description = (
+        "Detects bundled JavaScript rewritten by an automated obfuscator, which "
+        "defeats review of code the agent will execute"
+    )
+
+    # How many distinct obfuscator markers must appear before reporting.
+    MIN_MARKERS = 2
+    # Density guard: a single hex escape in an otherwise normal file is noise.
+    MIN_IDENTIFIER_HITS = 5
+
+    def evaluate(self, skill: ParsedSkill) -> list[Finding]:
+        findings = []
+        for bf in skill.bundled_content:
+            if bf.path.suffix not in _JS_EXTENSIONS:
+                continue
+            content = bf.content
+            markers = sum(1 for pat in _JS_OBFUSCATOR_MARKERS if pat.search(content))
+            identifier_hits = len(_JS_OBFUSCATOR_MARKERS[0].findall(content))
+            if markers < self.MIN_MARKERS or identifier_hits < self.MIN_IDENTIFIER_HITS:
+                continue
+            findings.append(Finding(
+                rule_id=self.rule_id,
+                title=self.title,
+                description=self.description,
+                severity=Severity.HIGH,
+                category=FindingCategory.OBFUSCATION,
+                file_path=bf.path,
+                line_number=1,
+                matched_content=f"{identifier_hits} obfuscated identifiers, "
+                                f"{markers}/{len(_JS_OBFUSCATOR_MARKERS)} obfuscator markers",
+                remediation=(
+                    "Obtain readable source for this file, or do not install the skill. "
+                    "Obfuscated bundles cannot be reviewed before the agent runs them."
+                ),
+                reference=None,
+                confidence=0.9,
+                context_note=(
+                    "Reported once per file. Obfuscation is not by itself proof of "
+                    "malice, but it removes any ability to audit what runs."
+                ),
+            ))
+        return findings
+

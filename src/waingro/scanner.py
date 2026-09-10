@@ -2,6 +2,11 @@
 
 from pathlib import Path
 
+from waingro.analyzers.aggregate import (
+    aggregate_by_file_spread,
+    aggregate_findings,
+    suppress_redundant,
+)
 from waingro.analyzers.context import (
     adjust_finding_confidence,
     annotate_security_tool_name,
@@ -44,6 +49,12 @@ def scan_skill(path: Path, known_good_path: Path | None = None) -> ScanResult:
     security_tool_score = compute_security_tool_score(skill, findings)
     findings = adjust_finding_confidence(findings, security_tool_score, skill)
     findings = annotate_security_tool_name(findings, skill)
+
+    # Collapse repeats so one property counts once: per (rule, file), then
+    # across files, dropping what a more precise rule already covers.
+    findings = aggregate_findings(findings)
+    findings = suppress_redundant(findings)
+    findings = aggregate_by_file_spread(findings)
 
     # Risk profile
     profile = compute_risk_profile(findings, security_tool_score)
