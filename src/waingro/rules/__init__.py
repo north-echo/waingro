@@ -90,17 +90,15 @@ def code_block_body_lines(skill: ParsedSkill) -> set[int]:
     return covered
 
 
-def search_skill_content(
+def search_skill_content_lines(
     skill: ParsedSkill, patterns: list[re.Pattern],
-) -> list[tuple[str, int | None, Path]]:
-    """Search body, code blocks, and bundled files for pattern matches.
+) -> list[tuple[str, int | None, Path, str]]:
+    """Like :func:`search_skill_content` but also returns the full source line.
 
-    Skips comment lines and string-literal contexts in bundled scripts.
-    Returns (matched_text, line_number, file_path) tuples. Line numbers for
-    SKILL.md are file-relative (frontmatter included). Duplicate hits for the
-    same rule at the same location are collapsed.
+    Rules that need surrounding context (for example, deciding whether an
+    encoded blob sits next to a decode-and-execute sink) should use this.
     """
-    hits: list[tuple[str, int | None, Path]] = []
+    hits: list[tuple[str, int | None, Path, str]] = []
     skill_md = skill.path / "SKILL.md"
 
     # Search body (markdown — no comment filtering). Fenced blocks are skipped
@@ -113,7 +111,7 @@ def search_skill_content(
         for pat in patterns:
             m = pat.search(line)
             if m:
-                hits.append((m.group(0), i + offset, skill_md))
+                hits.append((m.group(0), i + offset, skill_md, line))
 
     # Search code blocks (inside SKILL.md — no comment filtering,
     # these are agent instructions)
@@ -122,7 +120,7 @@ def search_skill_content(
             for pat in patterns:
                 m = pat.search(line)
                 if m:
-                    hits.append((m.group(0), block["line"] + j, skill_md))
+                    hits.append((m.group(0), block["line"] + j, skill_md, line))
 
     # Search bundled file content (with comment/string-literal filtering)
     for bf in skill.bundled_content:
@@ -132,15 +130,29 @@ def search_skill_content(
             for pat in patterns:
                 m = pat.search(line)
                 if m:
-                    hits.append((m.group(0), k, bf.path))
+                    hits.append((m.group(0), k, bf.path, line))
 
     # Collapse identical (text, line, file) hits produced by overlapping
     # patterns within the same rule, preserving first-seen order.
     seen: set[tuple[str, int | None, Path]] = set()
-    deduped: list[tuple[str, int | None, Path]] = []
+    deduped: list[tuple[str, int | None, Path, str]] = []
     for hit in hits:
-        if hit in seen:
+        key = hit[:3]
+        if key in seen:
             continue
-        seen.add(hit)
+        seen.add(key)
         deduped.append(hit)
     return deduped
+
+
+def search_skill_content(
+    skill: ParsedSkill, patterns: list[re.Pattern],
+) -> list[tuple[str, int | None, Path]]:
+    """Search body, code blocks, and bundled files for pattern matches.
+
+    Skips comment lines and string-literal contexts in bundled scripts.
+    Returns (matched_text, line_number, file_path) tuples. Line numbers for
+    SKILL.md are file-relative (frontmatter included). Duplicate hits for the
+    same rule at the same location are collapsed.
+    """
+    return [(m, ln, fp) for m, ln, fp, _line in search_skill_content_lines(skill, patterns)]
