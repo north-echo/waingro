@@ -13,8 +13,10 @@ WAINGRO scans both ecosystems from a single tool.
 ## Install
 
 ```bash
-pip install waingro
+pip install git+https://github.com/north-echo/waingro.git
 ```
+
+Not on PyPI yet.
 
 ## Usage
 
@@ -29,7 +31,23 @@ waingro scan ./some-skill/ --format json --fail-on high
 
 # Audit all installed skills
 waingro audit ~/skills/
+
+# Add semantic analysis for skills static rules cannot resolve
+waingro scan ./some-skill/ --semantic
 ```
+
+### Semantic analysis
+
+Static rules cannot tell "block inputs matching this pattern" from "execute this
+pattern". That distinction is what separates a security tool from a malicious
+skill, and it is the largest source of false positives in this ecosystem: in the
+March 2026 ClawHub audit, 20 of 43 initially flagged skills turned out to be
+legitimate defensive tools carrying detection signatures.
+
+`--semantic` sends skills that static analysis leaves unresolved (verdict REVIEW
+or SUSPICIOUS with a moderate security-tool score) to the Claude API for an
+intent judgement. It requires `ANTHROPIC_API_KEY`. Cap spend with
+`--semantic-budget`. Skills that static rules already settle are not sent.
 
 ### MCP Servers
 
