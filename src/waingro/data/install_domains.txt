@@ -1,0 +1,68 @@
+# Domain reputation for curl-pipe-shell and remote-fetch rules.
+#
+# Two tiers, because they are not the same claim:
+#
+#   vendor   The domain is controlled by the project that publishes the
+#            installer. Piping it to a shell is the documented install path.
+#            Findings are suppressed to informational.
+#
+#   usercontent
+#            The host is reputable but the *content* is user-supplied: anyone
+#            can put a payload there. Findings are kept, at reduced severity,
+#            because the domain says nothing about the script.
+#
+# Anything not listed here keeps full severity.
+# Format: <tier> <domain>.  Subdomains of a listed domain match.
+
+vendor astral.sh
+vendor brew.sh
+vendor sh.rustup.rs
+vendor rustup.rs
+vendor get.docker.com
+vendor download.docker.com
+vendor nodejs.org
+vendor deb.nodesource.com
+vendor bun.sh
+vendor deno.land
+vendor get.pnpm.io
+vendor yarnpkg.com
+vendor ollama.com
+vendor install.python-poetry.org
+vendor python-poetry.org
+vendor pypi.org
+vendor files.pythonhosted.org
+vendor registry.npmjs.org
+vendor npmjs.com
+vendor aliyuncli.alicdn.com
+vendor awscli.amazonaws.com
+vendor sdk.cloud.google.com
+vendor packages.microsoft.com
+vendor apt.llvm.org
+vendor go.dev
+vendor golang.org
+vendor helm.sh
+vendor k3s.io
+vendor get.k3s.io
+vendor kubernetes.io
+vendor pkgs.k8s.io
+vendor sh.uv.sh
+vendor uv.astral.sh
+vendor starship.rs
+vendor nixos.org
+vendor tailscale.com
+vendor fly.io
+vendor cli.github.com
+vendor apt.releases.hashicorp.com
+vendor releases.hashicorp.com
+
+usercontent raw.githubusercontent.com
+usercontent gist.githubusercontent.com
+usercontent githubusercontent.com
+usercontent github.com
+usercontent gitlab.com
+usercontent bitbucket.org
+usercontent gitee.com
+usercontent jsdelivr.net
+usercontent cdn.jsdelivr.net
+usercontent unpkg.com
+usercontent statically.io
