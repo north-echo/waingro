@@ -62,7 +62,10 @@ Findings were split into priority tiers for manual review:
 Total skills triaged: 589. Initial automated verdicts: 43 TP, 145 FP, 401
 Suspicious. After manual review of all Tier 1 findings, 20 skills were
 reclassified from TP to FP (legitimate security tools with embedded detection
-signatures). Final confirmed TPs: 23.
+signatures), and a rescan with WAINGRO v0.2.0 found 2 additional malicious
+skills (the trojanized Polymarket clients). Final confirmed TPs: 25, per the
+Corrected Totals table in GHSA-c59g-h434-28gw: 12 C2 campaign + 9 reverse
+shells + 1 jailbreak + 1 curl-pipe-bash + 2 trojanized tool.
 
 ## Limitations
 

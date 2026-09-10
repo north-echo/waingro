@@ -70,9 +70,26 @@ VERDICT_TOOL = {
     },
 }
 
-DEFAULT_MODEL = "claude-sonnet-4-20250514"
+DEFAULT_MODEL = "claude-opus-5"
 DEFAULT_BUDGET = 5.00
 MAX_SKILL_TOKENS = 8000
+
+# USD per million tokens, (input, output). Used only to enforce --semantic-budget;
+# an unknown model falls back to the most expensive entry so the cap never
+# under-counts and overshoots the user's budget.
+MODEL_PRICING = {
+    "claude-opus-5": (5.00, 25.00),
+    "claude-opus-4-8": (5.00, 25.00),
+    "claude-sonnet-5": (2.00, 10.00),
+    "claude-haiku-4-5": (1.00, 5.00),
+    "claude-fable-5-1": (10.00, 50.00),
+}
+_FALLBACK_PRICING = max(MODEL_PRICING.values())
+
+
+def price_for(model: str) -> tuple[float, float]:
+    """Return (input, output) USD per million tokens for a model."""
+    return MODEL_PRICING.get(model, _FALLBACK_PRICING)
 
 
 class SemanticAnalyzer:
@@ -146,16 +163,20 @@ class SemanticAnalyzer:
         try:
             response = self.client.messages.create(
                 model=self.model,
-                max_tokens=512,
+                # Current models think by default, and thinking tokens count
+                # against max_tokens. 512 was sized for a non-thinking model and
+                # truncates the verdict before the tool call lands.
+                max_tokens=4096,
                 tools=[VERDICT_TOOL],
                 tool_choice={"type": "tool", "name": "submit_verdict"},
                 messages=[{"role": "user", "content": prompt}],
             )
 
-            # Track cost
+            # Track cost against the configured model's real rates
+            in_rate, out_rate = price_for(self.model)
             input_tokens = response.usage.input_tokens
             output_tokens = response.usage.output_tokens
-            cost = (input_tokens * 3 + output_tokens * 15) / 1_000_000
+            cost = (input_tokens * in_rate + output_tokens * out_rate) / 1_000_000
             self._spent += cost
 
             # Extract tool_use result — already parsed JSON
