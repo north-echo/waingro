@@ -13,6 +13,18 @@ CODE_BLOCK_RE = re.compile(r"^```(\w*)\n(.*?)^```", re.MULTILINE | re.DOTALL)
 BUNDLED_EXTENSIONS = {".sh", ".py", ".js", ".json"}
 
 
+
+def _read_text(path: Path) -> str:
+    """Read a SKILL.md tolerantly.
+
+    A skill whose SKILL.md is not valid UTF-8 must still be scanned. Failing
+    the read means the file is silently never analysed, which is the worst
+    outcome available: a malformed encoding is exactly what an author would
+    reach for to slip past a scanner. Undecodable bytes become replacement
+    characters so the rules still see the surrounding text.
+    """
+    return path.read_text(encoding="utf-8", errors="replace")
+
 def parse_frontmatter(content: str) -> tuple[dict, str]:
     """Extract YAML frontmatter and return (metadata_dict, body)."""
     match = FRONTMATTER_RE.match(content)
@@ -79,7 +91,7 @@ def parse_skill(path: Path) -> ParsedSkill:
         skill_md = path
         skill_dir = path.parent
 
-    content = skill_md.read_text(encoding="utf-8") if skill_md.exists() else ""
+    content = _read_text(skill_md) if skill_md.exists() else ""
     raw_meta, body = parse_frontmatter(content)
 
     # Count frontmatter lines for offset

@@ -4,6 +4,7 @@ import logging
 import re
 from pathlib import Path
 
+from waingro.analyzers.typosquat import _levenshtein
 from waingro.models import Finding, FindingCategory, ParsedSkill, Severity
 from waingro.rules import Rule, register_rule, search_skill_content
 
@@ -43,6 +44,35 @@ _TRUSTED_SCOPES = re.compile(
     re.IGNORECASE,
 )
 
+
+# Impersonating the platform is a different attack from typosquatting a
+# package, and edit distance cannot see it: "openclaw-core" is nowhere near any
+# real package name, it just sounds like the runtime the skill claims to need.
+# This is the 1Password-documented shape - invent a plausible first-party
+# dependency and let the agent install it.
+_PLATFORM_BRANDS = re.compile(
+    r"(?:^|[-_@/])(?:openclaw|clawhub|clawd|clawdbot|anthropic|claude)(?:$|[-_./])",
+    re.IGNORECASE,
+)
+
+
+# Names too short to typosquat meaningfully - a 1-edit neighbourhood of a
+# 3-character name is most of the registry.
+_MIN_TYPOSQUAT_LEN = 5
+
+
+def _nearest_known(pkg: str, threshold: int = 2) -> str | None:
+    """Return a known package within `threshold` edits of `pkg`, else None."""
+    if len(pkg) < _MIN_TYPOSQUAT_LEN:
+        return None
+    best, best_dist = None, threshold + 1
+    for good in KNOWN_GOOD_PACKAGES:
+        if abs(len(good) - len(pkg)) > threshold or len(good) < _MIN_TYPOSQUAT_LEN:
+            continue
+        dist = _levenshtein(pkg, good)
+        if 0 < dist < best_dist:
+            best, best_dist = good, dist
+    return best
 
 @register_rule
 class FakeDependency(Rule):
@@ -87,20 +117,55 @@ class FakeDependency(Rule):
                     if pkg not in KNOWN_GOOD_PACKAGES:
                         if _TRUSTED_SCOPES.match(pkg):
                             continue
+
+                        # The allowlist holds a few hundred names against
+                        # ecosystems of millions, so "not on the list" is not
+                        # evidence of anything: pyzotero and pptxgenjs are real.
+                        # What the rule is actually for is typosquatting, and
+                        # that has a signal - a name one or two edits from a
+                        # popular package. Grade on that, not on membership.
+                        near = _nearest_known(pkg)
+                        if _PLATFORM_BRANDS.search(pkg):
+                            severity, confidence = Severity.HIGH, 0.8
+                            remediation = (
+                                f'"{pkg}" is presented as a first-party component '
+                                "but is not a recognized package. Verify that it "
+                                "exists and is published by the platform."
+                            )
+                            note = (
+                                "Unrecognised package whose name claims platform "
+                                "affiliation."
+                            )
+                        elif near:
+                            severity, confidence = Severity.HIGH, 0.85
+                            remediation = (
+                                f'"{pkg}" is one or two characters from "{near}", '
+                                "a widely used package. Verify before installing."
+                            )
+                            note = f"Possible typosquat of {near}."
+                        else:
+                            severity, confidence = Severity.LOW, 0.2
+                            remediation = (
+                                f'"{pkg}" is not in the known-package list. '
+                                "That alone is not suspicious; verify if unfamiliar."
+                            )
+                            note = (
+                                "Unrecognised package name with no close match to a "
+                                "known package. Informational only."
+                            )
                         findings.append(Finding(
                             rule_id=self.rule_id,
                             title=self.title,
                             description=self.description,
-                            severity=Severity.HIGH,
+                            severity=severity,
                             category=FindingCategory.SOCIAL_ENGINEERING,
                             file_path=fpath,
                             line_number=line_num,
                             matched_content=m.group(0)[:200],
-                            remediation=(
-                                f'"{pkg}" is not a recognized package. '
-                                "Verify before installing."
-                            ),
+                            remediation=remediation,
                             reference="1Password analysis (Feb 2026)",
+                            confidence=confidence,
+                            context_note=note,
                         ))
         return findings
 
