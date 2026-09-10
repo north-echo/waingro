@@ -68,9 +68,23 @@ signatures). Final confirmed TPs: 23.
 
 1. **Static analysis only.** No dynamic execution, sandbox analysis, or
    semantic AI analysis of skill behavior.
-2. **OBFUSC-001 noise.** The base64 string detection rule produced 175,370
-   findings (66.5% of all findings). The 40-character threshold matches SHA
-   hashes, UUIDs, and URL paths. Rule tuning is planned.
+2. **OBFUSC-001 noise (since fixed).** The base64 string detection rule
+   produced 175,370 findings (66.5% of all findings) because it matched a
+   character class without decoding. The rule now decodes before reporting and
+   grades severity by whether the line has a decode or execution sink; blobs
+   that are not valid base64, or that decode to images, fonts or hash
+   material, no longer count.
+
+6. **Counting artifact in the published totals.** Two defects inflated the
+   263,693 figure and the per-rule breakdown in `data/summary_public.json`.
+   Matches inside fenced code blocks in SKILL.md were reported twice, because
+   the body and the extracted code blocks were scanned as independent passes;
+   and a rule matching many times in one file was counted once per line rather
+   than once per property. Both are fixed. On a 63-skill sample drawn from the
+   live registry the same corpus yields 300 findings before the fixes and 60
+   after, with an identical set of flagged skills. The aggregate counts in this
+   directory are the pre-fix figures and should be read as upper bounds; the
+   true-positive counts, which came from manual triage, are unaffected.
 3. **Incomplete triage.** 401 skills are marked Suspicious but not yet manually
    reviewed. The true TP count is likely higher than 43.
 4. **Latest versions only.** Historical versions were not scanned. A skill
