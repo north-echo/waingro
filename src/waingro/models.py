@@ -62,6 +62,54 @@ class BundledFileContent:
 
     path: Path
     content: str
+    sha256: str | None = None
+    size_bytes: int | None = None
+
+
+@dataclass(frozen=True)
+class ArtifactFileDigest:
+    path: str
+    sha256: str
+    size_bytes: int
+
+
+@dataclass(frozen=True)
+class ArtifactIdentity:
+    sha256: str
+    file_count: int
+    total_bytes: int
+    files: list[ArtifactFileDigest]
+    algorithm: str = "sha256"
+    scope: str = "SKILL.md and supported bundled files up to depth 2"
+    schema_version: str = "1.0"
+
+    def to_dict(self) -> dict:
+        return {
+            "schema_version": self.schema_version,
+            "algorithm": self.algorithm,
+            "scope": self.scope,
+            "sha256": self.sha256,
+            "file_count": self.file_count,
+            "total_bytes": self.total_bytes,
+            "files": [
+                {
+                    "path": record.path,
+                    "sha256": record.sha256,
+                    "size_bytes": record.size_bytes,
+                }
+                for record in self.files
+            ],
+        }
+
+
+@dataclass(frozen=True)
+class PackageReference:
+    runner: str
+    selector: str
+    file_path: Path
+    line_number: int
+    immutable: bool
+    network_allowed: bool
 
 
 @dataclass
@@ -74,6 +122,8 @@ class ParsedSkill:
     bundled_content: list[BundledFileContent] = field(default_factory=list)
     sections: list = field(default_factory=list)  # list[MarkdownSection]
     frontmatter_lines: int = 0  # lines consumed by YAML frontmatter, for line-number offset
+    manifest_sha256: str | None = None
+    manifest_size_bytes: int | None = None
 
 
 @dataclass
@@ -85,6 +135,8 @@ class ScanResult:
     rules_evaluated: int = 0
     security_tool_score: float = 0.0
     risk_profile: dict = field(default_factory=dict)
+    artifact_identity: ArtifactIdentity | None = None
+    package_references: list[PackageReference] = field(default_factory=list)
 
     @property
     def verdict(self) -> str:

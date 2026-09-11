@@ -22,6 +22,8 @@ class PackageRunnerInvocation:
     runner: str
     package: str
     source_line: str
+    immutable: bool
+    network_allowed: bool
 
 
 _RUNNER_NAMES = (
@@ -29,7 +31,7 @@ _RUNNER_NAMES = (
     r"npm(?:\.cmd)?|pipx(?:\.exe)?|yarn(?:\.cmd)?|pnpm(?:\.cmd)?"
 )
 _RUNNER_MARKERS = ("npx", "pnpx", "bunx", "uvx", "npm", "pipx", "yarn", "pnpm")
-_CACHE_ATTRIBUTE = "_waingro_unpinned_package_runners"
+_CACHE_ATTRIBUTE = "_waingro_package_runner_invocations"
 _CACHE_MISSING = object()
 _ALIAS_RE = re.compile(
     rf"\b(?:const|let|var)\s+(?P<alias>[A-Za-z_$][\w$]*)\s*="
@@ -138,7 +140,7 @@ def _array_tokens(value: str, aliases: dict[str, str]) -> list[str]:
 def _package_selector(runner: str, args: list[str]) -> str | None:
     """Return the package selector that a runner may resolve remotely."""
     runner = _normalise_runner(runner)
-    if not args or any(flag in args for flag in _NO_NETWORK_FLAGS):
+    if not args:
         return None
 
     position = 0
@@ -186,7 +188,7 @@ def _is_immutable_selector(selector: str) -> bool:
     return bool(_EXACT_SEMVER_RE.fullmatch(version))
 
 
-def _append_if_unpinned(
+def _append_reference(
     findings: list[PackageRunnerInvocation],
     *,
     file_path: Path,
@@ -196,7 +198,7 @@ def _append_if_unpinned(
     source_line: str,
 ) -> None:
     selector = _package_selector(runner, args)
-    if selector and not _is_immutable_selector(selector):
+    if selector:
         findings.append(
             PackageRunnerInvocation(
                 file_path=file_path,
@@ -204,12 +206,14 @@ def _append_if_unpinned(
                 runner=_normalise_runner(runner),
                 package=selector,
                 source_line=source_line.strip(),
+                immutable=_is_immutable_selector(selector),
+                network_allowed=not any(flag in args for flag in _NO_NETWORK_FLAGS),
             )
         )
 
 
-def find_unpinned_package_runners(skill: ParsedSkill) -> list[PackageRunnerInvocation]:
-    """Find automatic, unpinned package-runner calls in bundled scripts."""
+def find_package_runners(skill: ParsedSkill) -> list[PackageRunnerInvocation]:
+    """Inventory automatic package-runner calls in bundled scripts."""
     cached = getattr(skill, _CACHE_ATTRIBUTE, _CACHE_MISSING)
     if cached is not _CACHE_MISSING:
         return list(cached)
@@ -250,7 +254,7 @@ def find_unpinned_package_runners(skill: ParsedSkill) -> list[PackageRunnerInvoc
             source_line = lines[line_number - 1]
             if _is_non_executable_line(source_line, bundled.path):
                 continue
-            _append_if_unpinned(
+            _append_reference(
                 findings,
                 file_path=bundled.path,
                 line_number=line_number,
@@ -264,7 +268,7 @@ def find_unpinned_package_runners(skill: ParsedSkill) -> list[PackageRunnerInvoc
             source_line = lines[line_number - 1]
             if _is_non_executable_line(source_line, bundled.path):
                 continue
-            _append_if_unpinned(
+            _append_reference(
                 findings,
                 file_path=bundled.path,
                 line_number=line_number,
@@ -281,7 +285,7 @@ def find_unpinned_package_runners(skill: ParsedSkill) -> list[PackageRunnerInvoc
             source_line = lines[line_number - 1]
             if _is_non_executable_line(source_line, bundled.path):
                 continue
-            _append_if_unpinned(
+            _append_reference(
                 findings,
                 file_path=bundled.path,
                 line_number=line_number,
@@ -297,7 +301,7 @@ def find_unpinned_package_runners(skill: ParsedSkill) -> list[PackageRunnerInvoc
                 match = _SHELL_RUNNER_RE.match(source_line)
                 if not match:
                     continue
-                _append_if_unpinned(
+                _append_reference(
                     findings,
                     file_path=bundled.path,
                     line_number=line_number,
@@ -315,3 +319,12 @@ def find_unpinned_package_runners(skill: ParsedSkill) -> list[PackageRunnerInvoc
             deduped.append(finding)
     setattr(skill, _CACHE_ATTRIBUTE, tuple(deduped))
     return list(deduped)
+
+
+def find_unpinned_package_runners(skill: ParsedSkill) -> list[PackageRunnerInvocation]:
+    """Find runner calls that may resolve a mutable package over the network."""
+    return [
+        invocation
+        for invocation in find_package_runners(skill)
+        if invocation.network_allowed and not invocation.immutable
+    ]

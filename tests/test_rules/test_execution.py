@@ -2,6 +2,7 @@
 
 import pytest
 
+from waingro.analyzers.package_runner import find_package_runners
 from waingro.rules.execution import (
     AuditLogDestruction,
     Base64Execution,
@@ -343,6 +344,12 @@ def test_exec_011_exact_package_pin_is_ignored(make_inline_skill):
 
     assert UnpinnedRuntimePackageExecution().evaluate(skill) == []
 
+    references = find_package_runners(skill)
+    assert len(references) == 1
+    assert references[0].package == "degit@2.8.4"
+    assert references[0].immutable is True
+    assert references[0].network_allowed is True
+
 
 def test_exec_011_no_install_is_ignored(make_inline_skill):
     skill = make_inline_skill(
@@ -353,6 +360,12 @@ def test_exec_011_no_install_is_ignored(make_inline_skill):
     )
 
     assert UnpinnedRuntimePackageExecution().evaluate(skill) == []
+
+    references = find_package_runners(skill)
+    assert len(references) == 1
+    assert references[0].package == "tsc"
+    assert references[0].network_allowed is False
+    assert references[0].immutable is False
 
 
 def test_exec_011_npx_call_option_is_not_a_package(make_inline_skill):

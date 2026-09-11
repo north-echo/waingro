@@ -89,6 +89,17 @@ def test_bundled_discovery_does_not_follow_external_file_symlink(tmp_path):
     assert discover_bundled_files(skill_dir) == []
 
 
+def test_bundled_discovery_does_not_follow_symlinked_directory(tmp_path):
+    skill_dir = tmp_path / "skill"
+    real_dir = skill_dir / "real"
+    real_dir.mkdir(parents=True)
+    script = real_dir / "run.py"
+    script.write_text("print('safe')\n", encoding="utf-8")
+    (skill_dir / "linked").symlink_to(real_dir, target_is_directory=True)
+
+    assert discover_bundled_files(skill_dir) == [script]
+
+
 def test_bundled_discovery_includes_instruction_and_script_formats(tmp_path):
     references = tmp_path / "references"
     references.mkdir()
@@ -137,3 +148,33 @@ def test_parse_skill_rejects_arbitrary_file(tmp_path):
         assert "expected a skill directory or SKILL.md" in str(exc)
     else:
         raise AssertionError("an arbitrary file should not be treated as SKILL.md")
+
+
+def test_parse_skill_rejects_symlinked_manifest(tmp_path):
+    skill_dir = tmp_path / "skill"
+    skill_dir.mkdir()
+    target = tmp_path / "outside.md"
+    target.write_text("---\nname: outside\n---\n", encoding="utf-8")
+    (skill_dir / "SKILL.md").symlink_to(target)
+
+    try:
+        parse_skill(skill_dir)
+    except ValueError as exc:
+        assert "symlinked SKILL.md" in str(exc)
+    else:
+        raise AssertionError("a symlinked manifest must not be followed")
+
+
+def test_parse_skill_rejects_symlinked_directory(tmp_path):
+    target = tmp_path / "real-skill"
+    target.mkdir()
+    (target / "SKILL.md").write_text("---\nname: real\n---\n", encoding="utf-8")
+    link = tmp_path / "linked-skill"
+    link.symlink_to(target, target_is_directory=True)
+
+    try:
+        parse_skill(link)
+    except ValueError as exc:
+        assert "symlinked skill paths" in str(exc)
+    else:
+        raise AssertionError("a symlinked skill directory must not be followed")

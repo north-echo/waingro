@@ -1,11 +1,13 @@
 """Parse SKILL.md files: extract YAML frontmatter, markdown body, and code blocks."""
 
+import hashlib
 import re
 from pathlib import Path
 
 import yaml
 
 from waingro.models import ParsedSkill, SkillMetadata
+from waingro.parsers.script import read_file_bytes
 from waingro.parsers.sections import parse_sections
 
 FRONTMATTER_RE = re.compile(r"^---\s*\n(.*?)\n---\s*\n", re.DOTALL)
@@ -40,18 +42,6 @@ def _string_list(value) -> list[str]:
     if not isinstance(value, list):
         return []
     return [item for item in value if isinstance(item, str)]
-
-
-def _read_text(path: Path) -> str:
-    """Read a SKILL.md tolerantly.
-
-    A skill whose SKILL.md is not valid UTF-8 must still be scanned. Failing
-    the read means the file is silently never analysed, which is the worst
-    outcome available: a malformed encoding is exactly what an author would
-    reach for to slip past a scanner. Undecodable bytes become replacement
-    characters so the rules still see the surrounding text.
-    """
-    return path.read_text(encoding="utf-8", errors="replace")
 
 
 def parse_frontmatter(content: str) -> tuple[dict, str]:
@@ -123,6 +113,16 @@ def discover_bundled_files(skill_dir: Path) -> list[Path]:
             if path.is_symlink() or not path.is_file():
                 continue
             try:
+                lexical_relative = path.relative_to(skill_dir)
+            except ValueError:
+                continue
+            cursor = skill_dir
+            if any(
+                (cursor := cursor / part).is_symlink()
+                for part in lexical_relative.parts
+            ):
+                continue
+            try:
                 relative = path.resolve().relative_to(root)
             except ValueError:
                 continue
@@ -134,6 +134,8 @@ def discover_bundled_files(skill_dir: Path) -> list[Path]:
 
 def parse_skill(path: Path) -> ParsedSkill:
     """Parse a skill directory or SKILL.md file into a ParsedSkill."""
+    if path.is_symlink():
+        raise ValueError(f"symlinked skill paths are not accepted: {path}")
     if path.is_dir():
         skill_md = path / "SKILL.md"
         skill_dir = path
@@ -143,10 +145,13 @@ def parse_skill(path: Path) -> ParsedSkill:
         skill_md = path
         skill_dir = path.parent
 
+    if skill_md.is_symlink():
+        raise ValueError(f"symlinked SKILL.md is not accepted: {skill_md}")
     if not skill_md.is_file():
         raise FileNotFoundError(f"SKILL.md not found: {skill_md}")
 
-    content = _read_text(skill_md)
+    raw_content = read_file_bytes(skill_md)
+    content = raw_content.decode("utf-8", errors="replace")
     raw_meta, body = parse_frontmatter(content)
 
     # Count frontmatter lines for offset
@@ -176,4 +181,6 @@ def parse_skill(path: Path) -> ParsedSkill:
         bundled_files=bundled_files,
         sections=sections,
         frontmatter_lines=fm_lines,
+        manifest_sha256=hashlib.sha256(raw_content).hexdigest(),
+        manifest_size_bytes=len(raw_content),
     )

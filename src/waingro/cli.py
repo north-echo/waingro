@@ -11,7 +11,17 @@ from waingro.analyzers.risk_profile import compute_risk_profile
 from waingro.evaluation import PREDICATES, evaluate_dataset
 from waingro.models import Severity
 from waingro.reporters.console import print_audit_results, print_result
-from waingro.reporters.json_report import format_audit_json, format_json
+from waingro.reporters.json_report import format_audit_json, format_json, result_to_dict
+from waingro.resolvers.package_artifact import (
+    DEFAULT_MAX_ARTIFACT_BYTES,
+    PackageArtifactClient,
+    inspect_package_artifacts,
+)
+from waingro.resolvers.package_registry import (
+    DEFAULT_MAX_METADATA_BYTES,
+    RegistryMetadataClient,
+    resolve_package_references,
+)
 from waingro.scanner import audit_skills, load_skill, scan_skill
 
 SEVERITY_MAP = {
@@ -52,6 +62,12 @@ def main() -> None:
 @click.option("-v", "--verbose", is_flag=True, default=False)
 @click.option("--semantic", is_flag=True, default=False, help="Enable Claude API semantic analysis")
 @click.option("--semantic-budget", type=float, default=5.0, help="Max spend for semantic analysis")
+@click.option(
+    "--expect-sha256",
+    type=str,
+    default=None,
+    help="Require the scanned artifact scope to match this SHA-256 digest.",
+)
 def scan(
     path: Path,
     fmt: str,
@@ -63,12 +79,29 @@ def scan(
     verbose: bool,
     semantic: bool,
     semantic_budget: float,
+    expect_sha256: str | None,
 ) -> None:
     """Scan an OpenClaw skill directory or SKILL.md file for security issues."""
     try:
         result = scan_skill(path)
     except (OSError, ValueError) as exc:
         raise click.ClickException(str(exc)) from exc
+
+    if expect_sha256 is not None:
+        expected = expect_sha256.lower()
+        invalid_character = any(
+            character not in "0123456789abcdef" for character in expected
+        )
+        if len(expected) != 64 or invalid_character:
+            raise click.BadParameter(
+                "must be exactly 64 hexadecimal characters",
+                param_hint="--expect-sha256",
+            )
+        actual = result.artifact_identity.sha256 if result.artifact_identity else ""
+        if actual != expected:
+            raise click.ClickException(
+                f"artifact SHA-256 mismatch: expected {expected}, scanned {actual}"
+            )
 
     if semantic and result.findings:
         from waingro.analyzers.semantic import SemanticAnalyzer
@@ -235,6 +268,60 @@ def benchmark(
 def version() -> None:
     """Print version information."""
     click.echo(f"waingro {__version__}")
+
+
+@main.command("resolve-packages")
+@click.argument("path", type=click.Path(exists=True, path_type=Path))
+@click.option("--timeout", type=click.FloatRange(min=0.1), default=5.0, show_default=True)
+@click.option(
+    "--max-metadata-bytes",
+    type=click.IntRange(min=1024),
+    default=DEFAULT_MAX_METADATA_BYTES,
+    show_default=True,
+)
+@click.option(
+    "--inspect-artifacts",
+    is_flag=True,
+    default=False,
+    help="Download and non-extractingly inspect resolved npm archives.",
+)
+@click.option(
+    "--max-artifact-bytes",
+    type=click.IntRange(min=1024),
+    default=DEFAULT_MAX_ARTIFACT_BYTES,
+    show_default=True,
+)
+@click.option("-o", "--output", type=click.Path(path_type=Path), default=None)
+def resolve_packages(
+    path: Path,
+    timeout: float,
+    max_metadata_bytes: int,
+    inspect_artifacts: bool,
+    max_artifact_bytes: int,
+    output: Path | None,
+) -> None:
+    """Resolve runner references using official registry metadata without executing them."""
+    try:
+        result = scan_skill(path)
+        client = RegistryMetadataClient(timeout=timeout, max_bytes=max_metadata_bytes)
+        resolutions = resolve_package_references(result.package_references, client)
+        inspections = []
+        if inspect_artifacts:
+            artifact_client = PackageArtifactClient(
+                timeout=timeout,
+                max_bytes=max_artifact_bytes,
+            )
+            inspections = inspect_package_artifacts(resolutions, artifact_client)
+    except (OSError, ValueError) as exc:
+        raise click.ClickException(str(exc)) from exc
+    report = result_to_dict(result)
+    report["package_resolutions"] = [resolution.to_dict() for resolution in resolutions]
+    report["package_artifacts"] = [inspection.to_dict() for inspection in inspections]
+    rendered = json.dumps(report, indent=2)
+    if output:
+        output.write_text(rendered + "\n", encoding="utf-8")
+    else:
+        click.echo(rendered)
 
 
 # ── MCP subcommand group ──────────────────────────────────────────────

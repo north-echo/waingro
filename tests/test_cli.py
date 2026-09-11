@@ -14,7 +14,7 @@ def test_version_command():
     runner = CliRunner()
     result = runner.invoke(main, ["version"])
     assert result.exit_code == 0
-    assert "0.4.1" in result.output
+    assert "0.5.0" in result.output
 
 
 def test_scan_clean_console():
@@ -46,6 +46,104 @@ def test_scan_json_output():
     data = json.loads(result.output)
     assert data["verdict"] == "SUSPICIOUS"
     assert len(data["findings"]) >= 1
+    assert data["artifact"]["algorithm"] == "sha256"
+    assert data["artifact"]["file_count"] == data["files_scanned"]
+    assert data["metadata"]["name"] == "solana-wallet-tracker"
+
+
+def test_scan_expected_artifact_sha256(tmp_path):
+    runner = CliRunner()
+    path = FIXTURES_DIR / "clean" / "basic-skill"
+    initial = runner.invoke(main, ["scan", str(path), "--format", "json"])
+    digest = json.loads(initial.output)["artifact"]["sha256"]
+
+    matched = runner.invoke(main, ["scan", str(path), "--expect-sha256", digest])
+    mismatched = runner.invoke(main, ["scan", str(path), "--expect-sha256", "0" * 64])
+    invalid = runner.invoke(main, ["scan", str(path), "--expect-sha256", "not-a-digest"])
+
+    assert matched.exit_code == 0
+    assert mismatched.exit_code == 1
+    assert "artifact SHA-256 mismatch" in mismatched.output
+    assert invalid.exit_code == 2
+    assert "64 hexadecimal characters" in invalid.output
+
+
+def test_scan_json_inventories_package_runner_references(tmp_path):
+    skill = tmp_path / "package-runner"
+    scripts = skill / "scripts"
+    scripts.mkdir(parents=True)
+    (skill / "SKILL.md").write_text("---\nname: package-runner\n---\n", encoding="utf-8")
+    (scripts / "run.js").write_text(
+        "spawnSync('npx', ['--no-install', 'tsc']);\n"
+        "spawnSync('npx', ['degit@2.8.4']);\n"
+        "spawnSync('npx', ['prettier']);\n",
+        encoding="utf-8",
+    )
+
+    result = CliRunner().invoke(main, ["scan", str(skill), "--format", "json"])
+    report = json.loads(result.output)
+
+    assert result.exit_code == 0
+    assert report["package_references"] == [
+        {
+            "runner": "npx",
+            "selector": "tsc",
+            "file_path": "scripts/run.js",
+            "line_number": 1,
+            "immutable": False,
+            "network_allowed": False,
+        },
+        {
+            "runner": "npx",
+            "selector": "degit@2.8.4",
+            "file_path": "scripts/run.js",
+            "line_number": 2,
+            "immutable": True,
+            "network_allowed": True,
+        },
+        {
+            "runner": "npx",
+            "selector": "prettier",
+            "file_path": "scripts/run.js",
+            "line_number": 3,
+            "immutable": False,
+            "network_allowed": True,
+        },
+    ]
+
+
+def test_resolve_packages_uses_metadata_only_client(tmp_path, monkeypatch):
+    skill = tmp_path / "resolver"
+    scripts = skill / "scripts"
+    scripts.mkdir(parents=True)
+    (skill / "SKILL.md").write_text("---\nname: resolver\n---\n", encoding="utf-8")
+    (scripts / "run.js").write_text("spawnSync('npx', ['prettier']);\n", encoding="utf-8")
+
+    def fetch(url):
+        assert url == "https://registry.npmjs.org/prettier"
+        return {
+            "dist-tags": {"latest": "4.0.0"},
+            "versions": {
+                "4.0.0": {
+                    "dist": {
+                        "tarball": "https://registry.npmjs.org/prettier/-/prettier-4.0.0.tgz",
+                        "integrity": "sha512-example",
+                    }
+                }
+            },
+        }
+
+    monkeypatch.setattr(
+        "waingro.cli.RegistryMetadataClient",
+        lambda **_kwargs: fetch,
+    )
+
+    result = CliRunner().invoke(main, ["resolve-packages", str(skill)])
+    report = json.loads(result.output)
+
+    assert result.exit_code == 0
+    assert report["package_resolutions"][0]["resolved_version"] == "4.0.0"
+    assert report["package_resolutions"][0]["integrity"] == "sha512-example"
 
 
 def test_scan_fail_on_critical():

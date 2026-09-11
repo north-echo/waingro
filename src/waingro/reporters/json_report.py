@@ -30,6 +30,25 @@ def result_to_dict(result: ScanResult, min_severity: Severity = Severity.INFO) -
     return {
         "version": __version__,
         "scan_path": str(result.skill_path),
+        "metadata": {
+            "name": result.metadata.name,
+            "version": result.metadata.version,
+            "author": result.metadata.author,
+        },
+        "artifact": (
+            result.artifact_identity.to_dict() if result.artifact_identity else None
+        ),
+        "package_references": [
+            {
+                "runner": reference.runner,
+                "selector": reference.selector,
+                "file_path": _display_path(result, reference.file_path),
+                "line_number": reference.line_number,
+                "immutable": reference.immutable,
+                "network_allowed": reference.network_allowed,
+            }
+            for reference in result.package_references
+        ],
         "verdict": result.verdict,
         "security_tool_score": result.security_tool_score,
         "risk_profile": result.risk_profile,

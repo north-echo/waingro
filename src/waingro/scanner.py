@@ -1,5 +1,6 @@
 """Scanner orchestrator: parse -> analyze -> produce ScanResult."""
 
+import hashlib
 from pathlib import Path
 
 from waingro.analyzers.aggregate import (
@@ -7,16 +8,18 @@ from waingro.analyzers.aggregate import (
     aggregate_findings,
     suppress_redundant,
 )
+from waingro.analyzers.artifact import build_artifact_identity
 from waingro.analyzers.context import (
     adjust_finding_confidence,
     annotate_security_tool_name,
     compute_security_tool_score,
 )
+from waingro.analyzers.package_runner import find_package_runners
 from waingro.analyzers.risk_profile import compute_risk_profile
 from waingro.analyzers.static import run_static_analysis
 from waingro.analyzers.typosquat import check_typosquat, load_known_good_skills
-from waingro.models import BundledFileContent, ParsedSkill, ScanResult
-from waingro.parsers.script import read_script
+from waingro.models import BundledFileContent, PackageReference, ParsedSkill, ScanResult
+from waingro.parsers.script import read_file_bytes
 from waingro.parsers.skill import parse_skill
 
 DEFAULT_KNOWN_GOOD = (
@@ -28,14 +31,33 @@ def load_skill(path: Path) -> ParsedSkill:
     """Parse a skill and load the contents of its bundled files."""
     skill = parse_skill(path)
     for bf in skill.bundled_files:
-        content = read_script(bf)
-        skill.bundled_content.append(BundledFileContent(path=bf, content=content))
+        raw_content = read_file_bytes(bf)
+        skill.bundled_content.append(
+            BundledFileContent(
+                path=bf,
+                content=raw_content.decode("utf-8", errors="replace"),
+                sha256=hashlib.sha256(raw_content).hexdigest(),
+                size_bytes=len(raw_content),
+            )
+        )
     return skill
 
 
 def scan_skill(path: Path, known_good_path: Path | None = None) -> ScanResult:
     """Scan a single skill directory or SKILL.md file."""
     skill = load_skill(path)
+    artifact_identity = build_artifact_identity(skill)
+    package_references = [
+        PackageReference(
+            runner=invocation.runner,
+            selector=invocation.package,
+            file_path=invocation.file_path,
+            line_number=invocation.line_number,
+            immutable=invocation.immutable,
+            network_allowed=invocation.network_allowed,
+        )
+        for invocation in find_package_runners(skill)
+    ]
 
     # Static analysis
     findings, rules_evaluated = run_static_analysis(skill)
@@ -69,6 +91,8 @@ def scan_skill(path: Path, known_good_path: Path | None = None) -> ScanResult:
         rules_evaluated=rules_evaluated,
         security_tool_score=security_tool_score,
         risk_profile=profile.to_dict(),
+        artifact_identity=artifact_identity,
+        package_references=package_references,
     )
 
 
