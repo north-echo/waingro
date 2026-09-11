@@ -2,6 +2,7 @@
 
 from waingro.rules.behavior import (
     OffPurposeHighImpactInstruction,
+    RemoteTriggeredUnpinnedUpdater,
     ThirdPartyDataPrerequisite,
     UndisclosedBundledBehavior,
 )
@@ -159,3 +160,52 @@ def test_first_party_host_registration_is_not_mismatch(make_inline_skill):
     )
 
     assert ThirdPartyDataPrerequisite().evaluate(skill) == []
+
+
+def test_remote_triggered_unpinned_updater_is_reported(make_inline_skill):
+    skill = make_inline_skill(
+        body="Self-updating agent.",
+        bundled={
+            "src/update.js": (
+                "const { execFileSync } = require('child_process');\n"
+                "const npxBin = process.platform === 'win32' ? 'npx.cmd' : 'npx';\n"
+                "// The Hub heartbeat supplies the force_update directive.\n"
+                "function update(force_update) {\n"
+                "  execFileSync(npxBin, ['-y', 'degit', 'org/repo#v' + force_update.version]);\n"
+                "  _installDownloadedTree(INSTALL_ROOT);\n"
+                "}\n"
+            ),
+        },
+    )
+
+    findings = RemoteTriggeredUnpinnedUpdater().evaluate(skill)
+
+    assert len(findings) == 1
+    assert findings[0].rule_id == "BEHAV-004"
+    assert findings[0].severity.value == "high"
+
+
+def test_local_unpinned_formatter_is_not_remote_updater(make_inline_skill):
+    skill = make_inline_skill(
+        body="Format local files.",
+        bundled={
+            "scripts/format.js": "spawnSync('npx', ['prettier', '--write', file]);\n",
+        },
+    )
+
+    assert RemoteTriggeredUnpinnedUpdater().evaluate(skill) == []
+
+
+def test_remote_updater_with_exact_runner_pin_is_ignored(make_inline_skill):
+    skill = make_inline_skill(
+        body="Self-updating agent.",
+        bundled={
+            "src/update.js": (
+                "// A server heartbeat supplies an update directive.\n"
+                "execFileSync('npx', ['degit@2.8.4', target]);\n"
+                "_installDownloadedTree(INSTALL_ROOT);\n"
+            ),
+        },
+    )
+
+    assert RemoteTriggeredUnpinnedUpdater().evaluate(skill) == []

@@ -71,6 +71,10 @@ waingro mcp batch manifest.json --results results.json --cleanup
 
 ### Input and batch safety
 
+- Default skill and benchmark scans are static: WAINGRO reads candidate files
+  but does not import, execute, install, or contact dependencies declared by
+  them. The optional `--semantic` mode separately sends unresolved text to the
+  configured model API.
 - A skill scan accepts a skill directory containing `SKILL.md` or a `SKILL.md`
   file directly. Missing manifests and unrelated files are rejected.
 - Bundled files are scanned with their paths preserved in JSON reports. Symlinks
@@ -86,7 +90,7 @@ waingro mcp batch manifest.json --results results.json --cleanup
 
 ## Detection Coverage
 
-### OpenClaw Rules (45 rules)
+### OpenClaw Rules (47 rules)
 
 | Rule ID | Category | Severity | Description | Reference |
 |---------|----------|----------|-------------|-----------|
@@ -100,6 +104,7 @@ waingro mcp batch manifest.json --results results.json --cleanup
 | EXEC-008 | Supply chain | HIGH | Mutable remote instructions executed | ATT&CK T1105 |
 | EXEC-009 | Execution | HIGH-CRIT | Remote download, write, chmod, and execute chain | ATT&CK T1105, T1204 |
 | EXEC-010 | Execution | HIGH | Audit, authentication, or shell-history log destruction | ATT&CK T1070.002, T1070.003 |
+| EXEC-011 | Supply chain | MEDIUM | Automatic unpinned npx-like package execution | CWE-829, GHSA-jxh8-jh77-xh6g |
 | EXFIL-001 | Exfiltration | HIGH | Credential file access | Bitdefender |
 | EXFIL-002 | Exfiltration | CRITICAL | macOS Keychain access | — |
 | EXFIL-003 | Exfiltration | HIGH | Browser credential access | — |
@@ -136,6 +141,7 @@ waingro mcp batch manifest.json --results results.json --cleanup
 | BEHAV-001 | Behavioral mismatch | HIGH | Undisclosed high-impact bundled behavior | ATT&CK T1204 |
 | BEHAV-002 | Behavioral mismatch | HIGH | Off-purpose high-impact agent instruction | OWASP ASI04 |
 | BEHAV-003 | Behavioral mismatch | HIGH | Off-purpose prerequisite data transfer | ATT&CK T1041 |
+| BEHAV-004 | Supply chain | HIGH | Remote-update path using an unpinned package runner | CWE-829, GHSA-jxh8-jh77-xh6g |
 
 ### MCP Rules (16 rules)
 
@@ -193,6 +199,11 @@ Findings are graded and aggregated rather than counted per matching line.
   not labeled command-and-control. Intent still requires human review.
 - npm lifecycle findings come from parsed `preinstall`, `postinstall`, or
   `prepare` scripts whose command actually fetches content or starts a process.
+- Automatic `npx`, `npm exec`, `pnpx`, `bunx`, `uvx`, `pipx run`, and package
+  `dlx` calls in bundled scripts are reported when their package selector is
+  mutable. Exact semantic versions, full commit identifiers, local paths,
+  `--offline`, and `--no-install` are excluded. A higher-severity chain requires
+  remote update control and installation mutation in the same executable file.
 - Repeats collapse. Many hits of one rule in one file become one finding with
   an occurrence count; a rule firing across four or more files becomes one
   skill-level finding. Nothing is discarded, and severity carries the maximum
@@ -311,6 +322,8 @@ clusk@northecho.dev.
 - [Runtime Skill Audit benchmark](https://github.com/tu-tuing/Runtime-Skill-Audit)
 - [SkillFortifyBench](https://github.com/qualixar/skillfortifybench)
 - [Snyk ToxicSkills](https://github.com/snyk-labs/toxicskills-goof)
+- [npm npx documentation](https://docs.npmjs.com/cli/v12/commands/npx/)
+- [GitHub Advisory GHSA-jxh8-jh77-xh6g](https://github.com/advisories/GHSA-jxh8-jh77-xh6g)
 
 ## License
 

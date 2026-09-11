@@ -1,5 +1,7 @@
 """Tests for execution rules."""
 
+import pytest
+
 from waingro.rules.execution import (
     AuditLogDestruction,
     Base64Execution,
@@ -11,6 +13,7 @@ from waingro.rules.execution import (
     PasswordProtectedRemoteExecutable,
     PowerShellCradle,
     RemoteDownloadWriteExecute,
+    UnpinnedRuntimePackageExecution,
 )
 
 
@@ -308,3 +311,100 @@ def test_exec_010_normal_cache_cleanup_is_ignored(make_inline_skill):
     skill = make_inline_skill(body="rm -rf /tmp/my-tool-cache/*")
 
     assert AuditLogDestruction().evaluate(skill) == []
+
+
+def test_exec_011_programmatic_unpinned_npx(make_inline_skill):
+    skill = make_inline_skill(
+        body="Updater.",
+        bundled={
+            "src/update.js": (
+                "const { execFileSync } = require('child_process');\n"
+                "const npxBin = process.platform === 'win32' ? 'npx.cmd' : 'npx';\n"
+                "execFileSync(npxBin, ['-y', 'degit', 'org/repo#v' + version]);\n"
+            ),
+        },
+    )
+
+    findings = UnpinnedRuntimePackageExecution().evaluate(skill)
+
+    assert len(findings) == 1
+    assert findings[0].rule_id == "EXEC-011"
+    assert findings[0].severity.value == "medium"
+    assert "degit" in findings[0].context_note
+
+
+def test_exec_011_exact_package_pin_is_ignored(make_inline_skill):
+    skill = make_inline_skill(
+        body="Updater.",
+        bundled={
+            "src/update.js": "execFileSync('npx', ['-y', 'degit@2.8.4', 'org/repo']);\n",
+        },
+    )
+
+    assert UnpinnedRuntimePackageExecution().evaluate(skill) == []
+
+
+def test_exec_011_no_install_is_ignored(make_inline_skill):
+    skill = make_inline_skill(
+        body="Type checker.",
+        bundled={
+            "scripts/check.js": "spawnSync('npx', ['--no-install', 'tsc', '--noEmit']);\n",
+        },
+    )
+
+    assert UnpinnedRuntimePackageExecution().evaluate(skill) == []
+
+
+def test_exec_011_manual_markdown_command_is_ignored(make_inline_skill):
+    skill = make_inline_skill(body="Run `npx eslint .` to lint your project.")
+
+    assert UnpinnedRuntimePackageExecution().evaluate(skill) == []
+
+
+def test_exec_011_bundled_shell_runner_is_detected(make_inline_skill):
+    skill = make_inline_skill(
+        body="Formatter.",
+        bundled={"scripts/format.sh": "#!/bin/sh\nnpx prettier --write .\n"},
+    )
+
+    findings = UnpinnedRuntimePackageExecution().evaluate(skill)
+
+    assert len(findings) == 1
+    assert "prettier" in findings[0].context_note
+
+
+@pytest.mark.parametrize(
+    ("source", "package"),
+    [
+        ("execFileSync('npm', ['exec', 'pkg']);", "pkg"),
+        ("spawn('pnpm', ['dlx', 'toolkit']);", "toolkit"),
+        ("subprocess.run(['uvx', 'python-tool'])", "python-tool"),
+        ("execSync('pipx run formatter')", "formatter"),
+        ("spawnSync('npx', ['pkg@latest'])", "pkg@latest"),
+    ],
+)
+def test_exec_011_supported_programmatic_runners(make_inline_skill, source, package):
+    suffix = ".py" if source.startswith("subprocess") else ".js"
+    skill = make_inline_skill(body="Runner.", bundled={f"scripts/run{suffix}": source})
+
+    findings = UnpinnedRuntimePackageExecution().evaluate(skill)
+
+    assert len(findings) == 1
+    assert package in findings[0].context_note
+
+
+@pytest.mark.parametrize(
+    "selector",
+    [
+        "tool@1.2.3",
+        "@scope/tool@1.2.3-beta.1",
+        "github:org/tool#0123456789abcdef0123456789abcdef01234567",
+    ],
+)
+def test_exec_011_immutable_selectors_are_ignored(make_inline_skill, selector):
+    skill = make_inline_skill(
+        body="Runner.",
+        bundled={"scripts/run.js": f"spawnSync('npx', ['{selector}']);\n"},
+    )
+
+    assert UnpinnedRuntimePackageExecution().evaluate(skill) == []

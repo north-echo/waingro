@@ -3,6 +3,7 @@
 import re
 
 from waingro.analyzers.dataflow import expression_reaches_execution, statement_for_finding
+from waingro.analyzers.package_runner import find_unpinned_package_runners
 from waingro.analyzers.reputation import (
     USERCONTENT,
     VENDOR,
@@ -574,3 +575,39 @@ class AuditLogDestruction(Rule):
                 )
             )
         return findings
+
+
+@register_rule
+class UnpinnedRuntimePackageExecution(Rule):
+    rule_id = "EXEC-011"
+    title = "Unpinned runtime package execution"
+    description = (
+        "Detects bundled code that automatically runs a package through npx-like "
+        "resolution without an immutable version or commit"
+    )
+
+    def evaluate(self, skill: ParsedSkill) -> list[Finding]:
+        return [
+            Finding(
+                rule_id=self.rule_id,
+                title=self.title,
+                description=self.description,
+                severity=Severity.MEDIUM,
+                category=FindingCategory.SUPPLY_CHAIN,
+                file_path=invocation.file_path,
+                line_number=invocation.line_number,
+                matched_content=invocation.source_line[:200],
+                remediation=(
+                    f"Pin {invocation.package!r} to an exact version or immutable commit, "
+                    "or execute a dependency already locked and installed locally."
+                ),
+                reference="CWE-829; GitHub Advisory GHSA-jxh8-jh77-xh6g",
+                confidence=0.85,
+                context_note=(
+                    f"{invocation.runner} may resolve and execute {invocation.package!r} "
+                    "from a mutable package channel at runtime. This is a supply-chain "
+                    "primitive, not evidence of malicious intent."
+                ),
+            )
+            for invocation in find_unpinned_package_runners(skill)
+        ]

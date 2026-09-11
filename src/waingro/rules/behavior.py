@@ -6,6 +6,7 @@ import re
 from dataclasses import dataclass
 
 from waingro.analyzers.dataflow import statement_for_finding
+from waingro.analyzers.package_runner import find_unpinned_package_runners
 from waingro.analyzers.reputation import VENDOR, classify_text, is_first_party, skill_identifiers
 from waingro.models import Finding, FindingCategory, ParsedSkill, Severity
 from waingro.rules import (
@@ -306,6 +307,67 @@ class ThirdPartyDataPrerequisite(Rule):
                         "The instruction frames an off-purpose local-state transfer as "
                         "mandatory setup. This is a reusable social-engineering and "
                         "exfiltration signal, not proof of author identity or intent."
+                    ),
+                )
+            )
+        return findings
+
+
+_REMOTE_UPDATE_CONTROL_RE = re.compile(
+    r"(?:\b(?:hub|heartbeat|server|remote|control[ -]?plane)\b[\s\S]{0,180}"
+    r"\b(?:force[_ -]?update|upgrade|update directive)\b|"
+    r"\b(?:force[_ -]?update|upgrade|update directive)\b[\s\S]{0,180}"
+    r"\b(?:hub|heartbeat|server|remote|control[ -]?plane)\b)",
+    re.IGNORECASE,
+)
+_INSTALL_MUTATION_RE = re.compile(
+    r"\b(?:INSTALL_ROOT|install(?:ation)? root|_installDownloadedTree|"
+    r"cpSync|copyFileSync|renameSync|rmSync)\b",
+    re.IGNORECASE,
+)
+
+
+@register_rule
+class RemoteTriggeredUnpinnedUpdater(Rule):
+    rule_id = "BEHAV-004"
+    title = "Remote-update path uses unpinned package runner"
+    description = (
+        "Detects bundled updater code containing remote control handling, installation "
+        "mutation, and an unpinned runtime package runner"
+    )
+
+    def evaluate(self, skill: ParsedSkill) -> list[Finding]:
+        content_by_path = {bundled.path: bundled.content for bundled in skill.bundled_content}
+        findings = []
+        for invocation in find_unpinned_package_runners(skill):
+            content = content_by_path[invocation.file_path]
+            if not (
+                _REMOTE_UPDATE_CONTROL_RE.search(content)
+                and _INSTALL_MUTATION_RE.search(content)
+            ):
+                continue
+            findings.append(
+                Finding(
+                    rule_id=self.rule_id,
+                    title=self.title,
+                    description=self.description,
+                    severity=Severity.HIGH,
+                    category=FindingCategory.SUPPLY_CHAIN,
+                    file_path=invocation.file_path,
+                    line_number=invocation.line_number,
+                    matched_content=invocation.source_line[:200],
+                    remediation=(
+                        "Require explicit local approval for remote update directives. "
+                        "Use a versioned, locked updater and verify the downloaded tree "
+                        "with a trusted signature or digest before replacing files."
+                    ),
+                    reference="CWE-829; GitHub Advisory GHSA-jxh8-jh77-xh6g",
+                    confidence=0.85,
+                    context_note=(
+                        f"The same bundled file contains evidence of remote update "
+                        f"control, install mutation, and automatic execution of unpinned "
+                        f"package {invocation.package!r}. Confirm the caller before "
+                        "treating this as a complete path; it is not proof of intent."
                     ),
                 )
             )
