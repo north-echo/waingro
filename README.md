@@ -216,9 +216,11 @@ Scanner verdicts are triage labels, not ground truth. Severity describes impact;
 it does not prove intent. `MALICIOUS` is reserved for a direct DNS-exfiltration
 chain, or corroborating same-file evidence such as encoded execution or known
 command-and-control infrastructure plus execution. Other
-high-impact behavior is `SUSPICIOUS`; probable security tools and passive test,
-fixture, benchmark, or evaluation resources are routed to `REVIEW`. Confirm the
-complete behavior chain and publisher context before making an attribution.
+high-impact behavior is `SUSPICIOUS`; findings in explicit detection sections,
+rule/example literals, and passive test, fixture, benchmark, or evaluation
+resources are routed to `REVIEW`. A defensive-looking name never lowers
+confidence. Confirm the complete behavior chain and publisher context before
+making an attribution.
 
 ## Benchmarking
 

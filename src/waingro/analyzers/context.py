@@ -75,9 +75,19 @@ DETECTION_MARKERS = [
 
 _DETECTION_LITERAL_RE = re.compile(
     r"^\s*(?:[rubf]{0,2})?[\"']?"
-    r"(?:pattern|example|signature|indicator|blocked_pattern|deny_pattern)"
+    r"(?:pattern|example|reason|signature|indicator|blocked_pattern|deny_pattern)"
     r"[\"']?\s*:\s*(?:[rubf]{0,2})?[\"']",
     re.IGNORECASE,
+)
+_DEFENSIVE_REFERENCE_TOKENS = {"patterns", "rules", "signatures", "indicators"}
+_DEFENSIVE_REFERENCE_MARKER_RE = re.compile(
+    r"\b(?:what it (?:catches|detects)|patterns? detected|pattern reference|"
+    r"threat patterns?|detection signatures?)\b",
+    re.IGNORECASE,
+)
+_DETECTION_COLLECTION_RE = re.compile(
+    r"^[A-Z][A-Z0-9_]*(?:PATTERNS|RULES|SIGNATURES|INDICATORS|EXTENSIONS)\s*=\s*"
+    r"[\[({]"
 )
 
 
@@ -109,6 +119,47 @@ def _section_for_finding(skill: ParsedSkill, finding: Finding):
                 finding.line_number,
             )
     return None
+
+
+def _is_defensive_reference(
+    skill: ParsedSkill,
+    finding: Finding,
+    security_tool_score: float,
+) -> bool:
+    """Recognize an explicit signature reference without trusting its filename alone."""
+    if security_tool_score < 0.3 or finding.file_path.suffix.lower() not in {".md", ".txt"}:
+        return False
+    stem_tokens = set(re.split(r"[^a-z0-9]+", finding.file_path.stem.lower()))
+    if not stem_tokens & _DEFENSIVE_REFERENCE_TOKENS:
+        return False
+    return any(
+        bundled.path == finding.file_path
+        and bool(_DEFENSIVE_REFERENCE_MARKER_RE.search(bundled.content))
+        for bundled in skill.bundled_content
+    )
+
+
+def _is_detection_collection(
+    skill: ParsedSkill,
+    finding: Finding,
+    security_tool_score: float,
+) -> bool:
+    """Recognize a finding inside a named static signature collection."""
+    if security_tool_score < 0.3 or not finding.line_number:
+        return False
+    for bundled in skill.bundled_content:
+        if bundled.path != finding.file_path:
+            continue
+        lines = bundled.content.splitlines()
+        index = finding.line_number - 1
+        for prior in range(index, max(-1, index - 80), -1):
+            stripped = lines[prior].strip()
+            if _DETECTION_COLLECTION_RE.match(stripped):
+                return True
+            if prior < index and stripped in {"]", "])", "] ,", ")", "}", "},"}:
+                return False
+        return False
+    return False
 
 
 def compute_security_tool_score(
@@ -156,7 +207,7 @@ def adjust_finding_confidence(
     security_tool_score: float,
     skill: ParsedSkill | None = None,
 ) -> list[Finding]:
-    """Reduce confidence on findings when the skill is likely a security tool."""
+    """Lower confidence only for structurally passive or defensive locations."""
     for finding in findings:
         section = _section_for_finding(skill, finding) if skill else None
 
@@ -205,12 +256,22 @@ def adjust_finding_confidence(
         is_detection_section = bool(section and section.category == "detection")
         source_line = _bundled_source_line(skill, finding) if skill else None
         is_detection_literal = bool(source_line and _DETECTION_LITERAL_RE.match(source_line))
+        is_defensive_reference = bool(
+            skill
+            and _is_defensive_reference(skill, finding, security_tool_score)
+        )
+        is_detection_collection = bool(
+            skill
+            and _is_detection_collection(skill, finding, security_tool_score)
+        )
 
         if (
             is_passive_resource
             or is_defensive_fixture
             or is_detection_section
             or is_detection_literal
+            or is_defensive_reference
+            or is_detection_collection
         ):
             finding.confidence = min(finding.confidence, 0.1)
             reason = (
@@ -222,7 +283,15 @@ def adjust_finding_confidence(
                     else (
                         "detection-rule literal"
                         if is_detection_literal
-                        else "detection section"
+                        else (
+                            "defensive signature reference"
+                            if is_defensive_reference
+                            else (
+                                "static detection collection"
+                                if is_detection_collection
+                                else "detection section"
+                            )
+                        )
                     )
                 )
             )
@@ -232,12 +301,8 @@ def adjust_finding_confidence(
             )
             continue
 
-        if security_tool_score < 0.3 or finding.rule_id == "NET-002":
+        if security_tool_score < 0.3:
             continue
-
-        reduction = security_tool_score * 0.8
-
-        finding.confidence = round(max(finding.confidence * (1.0 - reduction), 0.1), 2)
 
         section_note = ""
         if section:
@@ -245,7 +310,7 @@ def adjust_finding_confidence(
         finding.context_note = (
             f"Pattern found in probable security tool "
             f"(security_tool_score={security_tool_score:.2f}).{section_note} "
-            f"Manual review recommended."
+            "Defensive identity is not trusted to lower confidence; manual review recommended."
         )
 
     return findings
