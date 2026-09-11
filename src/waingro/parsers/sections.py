@@ -22,6 +22,7 @@ USAGE_HEADINGS = {
 }
 
 DETECTION_HEADINGS = {
+    "detection",
     "what it detects",
     "detection patterns",
     "blocked patterns",
@@ -43,6 +44,13 @@ DETECTION_HEADINGS = {
     "detection engines",
     "security rules",
     "red flag",
+    "critical threats",
+    "warning signs",
+    "immediate rejection",
+    "needs review",
+    "what gets flagged",
+    "hooks scan",
+    "audit report",
     "obfuscated code",
     "credential theft",
     "危险标志",
@@ -138,9 +146,15 @@ def parse_sections(body: str, start_line_offset: int = 0) -> list[MarkdownSectio
             heading_stack.pop()
         parent = heading_stack[-1][1] if heading_stack else None
         category = classify_heading(heading)
-        if category == "unknown" and heading_stack:
+        if heading_stack:
             parent_category = heading_stack[-1][2]
-            if parent_category == "detection":
+            normalized_heading = heading.lower().strip()
+            is_numbered_example = bool(
+                re.match(r"^(?:example|sample)\b", normalized_heading)
+            )
+            if parent_category == "detection" and (
+                category == "unknown" or is_numbered_example
+            ):
                 category = parent_category
         heading_stack.append((level, heading, category))
 

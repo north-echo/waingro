@@ -22,6 +22,11 @@ def test_classify_detection_heading():
     assert classify_heading("Instant Block") == "detection"
     assert classify_heading("Security Guardrails — Vulnerability Patterns") == "detection"
     assert classify_heading("Dangerous Examples (Always Ask)") == "detection"
+    assert classify_heading("🚨 Critical Threats") == "detection"
+    assert classify_heading("🚫 Immediate Rejection (Critical)") == "detection"
+    assert classify_heading("⚠️ Needs Review (High)") == "detection"
+    assert classify_heading("Hooks scan") == "detection"
+    assert classify_heading("Example Audit Report") == "detection"
 
 
 def test_classify_chinese_detection_heading():
@@ -74,6 +79,24 @@ def test_headings_inside_fenced_code_do_not_break_section_inheritance():
         "Encoded payload",
     ]
     assert sections[1].category == "detection"
+
+
+def test_numbered_example_inherits_detection_over_usage_word():
+    body = (
+        "## Obfuscation Detection Examples\n\n"
+        "### Example 1: Base64 Encoding Hiding Commands\n\n"
+        "encoded example"
+    )
+    sections = parse_sections(body)
+    assert sections[0].category == "detection"
+    assert sections[1].category == "detection"
+
+
+def test_explicit_usage_child_does_not_inherit_detection():
+    body = "## Detection Patterns\n\n### Installation\n\nRun the installer."
+    sections = parse_sections(body)
+    assert sections[0].category == "detection"
+    assert sections[1].category == "usage"
 
 
 def test_find_section_for_line():
