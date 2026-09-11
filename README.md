@@ -241,6 +241,29 @@ The three misses are narrative-only disclosures with no active instruction or
 executable dataflow. This is one external dataset, not a claim of universal
 performance; keep adding real malicious samples and adversarial benign controls.
 
+On the 180 Claude-format cases in
+[SkillFortifyBench](https://github.com/qualixar/skillfortifybench) revision
+`eb9d5a9cbfa13b82ec3392d26dbae82fc6454b39`, `SUSPICIOUS+` produced
+58 true positives, 0 false positives, 90 true negatives, and 32 false negatives:
+100% precision, 64.4% recall, and 78.4% F1. The broader alert boundary, including
+`WARNING`, detected 78 of 90 malicious cases with no benign false positives.
+The difference exposes intentional limits: credential collection without a
+sink remains a warning, while typo- and dependency-squatting need an external
+ecosystem baseline. Benchmark percentages describe these frozen datasets, not
+the probability of detecting an unknown malicious skill.
+
+### Fresh ClawHub validation
+
+On 2026-09-11, revision `45c0d7a6538876197508ee8c2e9bf50a210690d9`
+scanned a frozen, manifest-reconciled set of 79,840 current ClawHub skill
+identities with zero scanner errors. The final distribution was 47,938 CLEAN,
+3,089 WARNING, 5,797 REVIEW, 23,016 SUSPICIOUS, and 0 MALICIOUS. Rare critical
+rules and an earlier pass's four top verdicts were manually reviewed; no
+malicious publisher attribution was confirmed. Known poisoned controls still
+reach `MALICIOUS`, so this is an honest negative with stated static-analysis
+limits, not evidence that ClawHub is malware-free. See the
+[full validation report](research/validation-2026-09-11.md).
+
 ## Threat-intelligence model
 
 WAINGRO treats public intelligence in deliberately different ways:
@@ -269,6 +292,7 @@ not promoted to an attack verdict.
 
 ## Research
 
+- [September 2026 validation and fresh ClawHub scan](research/validation-2026-09-11.md) — 79,840 current skill identities plus independent positive and negative controls
 - [ClawHub Ecosystem Security Audit](research/clawhub-audit/) — March 2026 audit of 30,037 skills
 - MCP Ecosystem Security Scan — March 2026 scan of 1,139 MCP servers (paper forthcoming)
 
