@@ -28,10 +28,22 @@ _RUNNER_NAMES = (
     r"npx(?:\.cmd)?|pnpx(?:\.cmd)?|bunx(?:\.cmd)?|uvx(?:\.exe)?|"
     r"npm(?:\.cmd)?|pipx(?:\.exe)?|yarn(?:\.cmd)?|pnpm(?:\.cmd)?"
 )
+_RUNNER_MARKERS = ("npx", "pnpx", "bunx", "uvx", "npm", "pipx", "yarn", "pnpm")
+_CACHE_ATTRIBUTE = "_waingro_unpinned_package_runners"
+_CACHE_MISSING = object()
 _ALIAS_RE = re.compile(
     rf"\b(?:const|let|var)\s+(?P<alias>[A-Za-z_$][\w$]*)\s*="
     rf"[^\n;]{{0,240}}?['\"](?P<runner>{_RUNNER_NAMES})['\"]",
     re.IGNORECASE,
+)
+_STRING_ALIAS_RE = re.compile(
+    r"\b(?:const|let|var)\s+(?P<alias>[A-Za-z_$][\w$]*)\s*=\s*"
+    r"(?P<quote>['\"])(?P<value>[^'\"\n]{1,240})(?P=quote)",
+)
+_PY_STRING_ALIAS_RE = re.compile(
+    r"^\s*(?P<alias>[A-Za-z_]\w*)\s*=\s*"
+    r"(?P<quote>['\"])(?P<value>[^'\"\n]{1,240})(?P=quote)",
+    re.MULTILINE,
 )
 _JS_ARGV_RE = re.compile(
     rf"\b(?:execFileSync|execFile|spawnSync|spawn|execa)\s*\(\s*"
@@ -48,9 +60,8 @@ _STRING_EXEC_RE = re.compile(
     r"\b(?:execSync|exec|system)\s*\(\s*(?P<quote>['\"])(?P<command>[^'\"\n]{1,800})(?P=quote)",
     re.IGNORECASE,
 )
-_QUOTED_TOKEN_RE = re.compile(r"(['\"])(?P<token>.*?)(?<!\\)\1")
 _SHELL_RUNNER_RE = re.compile(
-    rf"^\s*(?:sudo\s+)?(?P<runner>{_RUNNER_NAMES})\b(?P<args>.*)$",
+    rf"^\s*(?:sudo\s+)?(?P<runner>{_RUNNER_NAMES})(?=\s|$)(?P<args>.*)$",
     re.IGNORECASE,
 )
 _EXACT_SEMVER_RE = re.compile(
@@ -59,6 +70,7 @@ _EXACT_SEMVER_RE = re.compile(
 _FULL_COMMIT_RE = re.compile(r"#[0-9a-f]{40}$", re.IGNORECASE)
 _NO_NETWORK_FLAGS = {"--no-install", "--offline"}
 _FLAG_VALUE_OPTIONS = {
+    "-c",
     "--cache",
     "--call",
     "--node-options",
@@ -71,15 +83,56 @@ def _normalise_runner(value: str) -> str:
     return value.lower().removesuffix(".cmd").removesuffix(".exe")
 
 
-def _quoted_tokens(value: str) -> list[str]:
-    return [match.group("token") for match in _QUOTED_TOKEN_RE.finditer(value)]
-
-
 def _command_tokens(value: str) -> list[str]:
     try:
         return shlex.split(value, comments=False, posix=True)
     except ValueError:
         return []
+
+
+def _array_tokens(value: str, aliases: dict[str, str]) -> list[str]:
+    """Preserve array positions while resolving simple string aliases."""
+    expressions: list[str] = []
+    start = 0
+    quote = ""
+    escaped = False
+    depth = 0
+    for position, character in enumerate(value):
+        if escaped:
+            escaped = False
+            continue
+        if quote:
+            if character == "\\":
+                escaped = True
+            elif character == quote:
+                quote = ""
+            continue
+        if character in "'\"`":
+            quote = character
+        elif character in "([{":
+            depth += 1
+        elif character in ")]}" and depth:
+            depth -= 1
+        elif character == "," and depth == 0:
+            expressions.append(value[start:position].strip())
+            start = position + 1
+    expressions.append(value[start:].strip())
+
+    tokens = []
+    for expression in expressions:
+        if not expression:
+            continue
+        if (
+            len(expression) >= 2
+            and expression[0] in "'\""
+            and expression[-1] == expression[0]
+        ):
+            tokens.append(expression[1:-1])
+        elif expression in aliases:
+            tokens.append(aliases[expression])
+        else:
+            tokens.append("<dynamic>")
+    return tokens
 
 
 def _package_selector(runner: str, args: list[str]) -> str | None:
@@ -157,16 +210,34 @@ def _append_if_unpinned(
 
 def find_unpinned_package_runners(skill: ParsedSkill) -> list[PackageRunnerInvocation]:
     """Find automatic, unpinned package-runner calls in bundled scripts."""
+    cached = getattr(skill, _CACHE_ATTRIBUTE, _CACHE_MISSING)
+    if cached is not _CACHE_MISSING:
+        return list(cached)
+
     findings: list[PackageRunnerInvocation] = []
     for bundled in skill.bundled_content:
         suffix = bundled.path.suffix.lower()
         if suffix not in SCRIPT_EXTENSIONS:
             continue
         content = bundled.content
+        lowered_content = content.lower()
+        if not any(marker in lowered_content for marker in _RUNNER_MARKERS):
+            continue
+        lines = content.splitlines()
         aliases = {
             match.group("alias"): _normalise_runner(match.group("runner"))
             for match in _ALIAS_RE.finditer(content)
         }
+        string_aliases = {
+            match.group("alias"): match.group("value")
+            for match in _STRING_ALIAS_RE.finditer(content)
+        }
+        string_aliases.update(
+            {
+                match.group("alias"): match.group("value")
+                for match in _PY_STRING_ALIAS_RE.finditer(content)
+            }
+        )
 
         for match in _JS_ARGV_RE.finditer(content):
             raw_command = match.group("command")
@@ -176,7 +247,7 @@ def find_unpinned_package_runners(skill: ParsedSkill) -> list[PackageRunnerInvoc
             if not runner:
                 continue
             line_number = content.count("\n", 0, match.start()) + 1
-            source_line = content.splitlines()[line_number - 1]
+            source_line = lines[line_number - 1]
             if _is_non_executable_line(source_line, bundled.path):
                 continue
             _append_if_unpinned(
@@ -184,13 +255,13 @@ def find_unpinned_package_runners(skill: ParsedSkill) -> list[PackageRunnerInvoc
                 file_path=bundled.path,
                 line_number=line_number,
                 runner=runner,
-                args=_quoted_tokens(match.group("args")),
+                args=_array_tokens(match.group("args"), string_aliases),
                 source_line=source_line,
             )
 
         for match in _PY_ARGV_RE.finditer(content):
             line_number = content.count("\n", 0, match.start()) + 1
-            source_line = content.splitlines()[line_number - 1]
+            source_line = lines[line_number - 1]
             if _is_non_executable_line(source_line, bundled.path):
                 continue
             _append_if_unpinned(
@@ -198,7 +269,7 @@ def find_unpinned_package_runners(skill: ParsedSkill) -> list[PackageRunnerInvoc
                 file_path=bundled.path,
                 line_number=line_number,
                 runner=match.group("runner"),
-                args=_quoted_tokens(match.group("args")),
+                args=_array_tokens(match.group("args"), string_aliases),
                 source_line=source_line,
             )
 
@@ -207,7 +278,7 @@ def find_unpinned_package_runners(skill: ParsedSkill) -> list[PackageRunnerInvoc
             if not tokens or not re.fullmatch(_RUNNER_NAMES, tokens[0], re.IGNORECASE):
                 continue
             line_number = content.count("\n", 0, match.start()) + 1
-            source_line = content.splitlines()[line_number - 1]
+            source_line = lines[line_number - 1]
             if _is_non_executable_line(source_line, bundled.path):
                 continue
             _append_if_unpinned(
@@ -220,7 +291,7 @@ def find_unpinned_package_runners(skill: ParsedSkill) -> list[PackageRunnerInvoc
             )
 
         if suffix in {".sh", ".bash", ".zsh"}:
-            for line_number, source_line in enumerate(content.splitlines(), start=1):
+            for line_number, source_line in enumerate(lines, start=1):
                 if _is_non_executable_line(source_line, bundled.path):
                     continue
                 match = _SHELL_RUNNER_RE.match(source_line)
@@ -242,4 +313,5 @@ def find_unpinned_package_runners(skill: ParsedSkill) -> list[PackageRunnerInvoc
         if key not in seen:
             seen.add(key)
             deduped.append(finding)
-    return deduped
+    setattr(skill, _CACHE_ATTRIBUTE, tuple(deduped))
+    return list(deduped)

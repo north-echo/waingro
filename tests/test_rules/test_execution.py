@@ -355,6 +355,75 @@ def test_exec_011_no_install_is_ignored(make_inline_skill):
     assert UnpinnedRuntimePackageExecution().evaluate(skill) == []
 
 
+def test_exec_011_npx_call_option_is_not_a_package(make_inline_skill):
+    skill = make_inline_skill(
+        body="Task runner.",
+        bundled={
+            "scripts/check.js": "execSync('npx -c \"eslint && test\"');\n",
+        },
+    )
+
+    assert UnpinnedRuntimePackageExecution().evaluate(skill) == []
+
+
+def test_exec_011_resolves_js_string_alias_before_subcommand(make_inline_skill):
+    skill = make_inline_skill(
+        body="Installer.",
+        bundled={
+            "scripts/install.mjs": (
+                "const NPX = 'npx';\n"
+                "const PKG = 'fsb-mcp-server';\n"
+                "spawn(NPX, ['-y', PKG, 'install', '--list']);\n"
+            ),
+        },
+    )
+
+    findings = UnpinnedRuntimePackageExecution().evaluate(skill)
+
+    assert len(findings) == 1
+    assert "fsb-mcp-server" in findings[0].context_note
+
+
+def test_exec_011_dynamic_js_package_is_not_shifted_to_subcommand(make_inline_skill):
+    skill = make_inline_skill(
+        body="Installer.",
+        bundled={
+            "scripts/install.js": "spawn('npx', ['-y', packageName, 'install']);\n",
+        },
+    )
+
+    findings = UnpinnedRuntimePackageExecution().evaluate(skill)
+
+    assert len(findings) == 1
+    assert "<dynamic>" in findings[0].context_note
+
+
+def test_exec_011_resolves_python_string_alias_before_subcommand(make_inline_skill):
+    skill = make_inline_skill(
+        body="Installer.",
+        bundled={
+            "scripts/install.py": (
+                'PACKAGE = "mcp-remote"\n'
+                'subprocess.run(["npx", "-y", PACKAGE, "install"])\n'
+            ),
+        },
+    )
+
+    findings = UnpinnedRuntimePackageExecution().evaluate(skill)
+
+    assert len(findings) == 1
+    assert "mcp-remote" in findings[0].context_note
+
+
+def test_exec_011_shell_case_label_is_ignored(make_inline_skill):
+    skill = make_inline_skill(
+        body="Scanner.",
+        bundled={"scripts/scan.sh": 'npx-exec) echo "package execution" ;;\n'},
+    )
+
+    assert UnpinnedRuntimePackageExecution().evaluate(skill) == []
+
+
 def test_exec_011_manual_markdown_command_is_ignored(make_inline_skill):
     skill = make_inline_skill(body="Run `npx eslint .` to lint your project.")
 
