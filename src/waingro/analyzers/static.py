@@ -1,6 +1,7 @@
 """Static analyzer: runs all registered rules against a parsed skill."""
 
 # Import all rule modules to trigger registration
+import waingro.rules.behavior  # noqa: F401
 import waingro.rules.execution  # noqa: F401
 import waingro.rules.exfiltration  # noqa: F401
 import waingro.rules.injection  # noqa: F401

@@ -1,5 +1,6 @@
 """WAINGRO CLI: Click-based command line interface."""
 
+import json
 import sys
 from pathlib import Path
 
@@ -7,6 +8,7 @@ import click
 
 from waingro import __version__
 from waingro.analyzers.risk_profile import compute_risk_profile
+from waingro.evaluation import PREDICATES, evaluate_dataset
 from waingro.models import Severity
 from waingro.reporters.console import print_audit_results, print_result
 from waingro.reporters.json_report import format_audit_json, format_json
@@ -153,6 +155,80 @@ def audit(
         for r in results:
             if any(_severity_at_or_above(f.severity, fail_sev) for f in r.findings):
                 sys.exit(1)
+
+
+@main.command()
+@click.argument(
+    "dataset",
+    type=click.Path(exists=True, file_okay=False, path_type=Path),
+)
+@click.option(
+    "--threshold",
+    type=click.Choice(list(PREDICATES)),
+    default="suspicious",
+    show_default=True,
+    help="Verdict boundary used for pass/fail metrics.",
+)
+@click.option("-f", "--format", "fmt", type=click.Choice(["console", "json"]), default="console")
+@click.option("-o", "--output", type=click.Path(path_type=Path), default=None)
+@click.option("--fail-under-precision", type=click.FloatRange(0.0, 1.0), default=None)
+@click.option("--fail-under-recall", type=click.FloatRange(0.0, 1.0), default=None)
+def benchmark(
+    dataset: Path,
+    threshold: str,
+    fmt: str,
+    output: Path | None,
+    fail_under_precision: float | None,
+    fail_under_recall: float | None,
+) -> None:
+    """Evaluate WAINGRO against DATASET/{benign,malicious} without executing it."""
+    try:
+        report = evaluate_dataset(dataset)
+    except (OSError, ValueError) as exc:
+        raise click.ClickException(str(exc)) from exc
+
+    data = report.to_dict()
+    selected = report.metrics(threshold)
+    if fmt == "json":
+        rendered = json.dumps(data, indent=2)
+    else:
+        lines = [
+            f"Dataset: {data['dataset']}",
+            f"Cases: {data['cases']}  Errors: {len(data['errors'])}",
+            "",
+            "Threshold       Precision  Recall  Specificity  F1       TP  FP  TN  FN",
+        ]
+        for name in PREDICATES:
+            metrics = report.metrics(name)
+            lines.append(
+                f"{name:15s} {metrics.precision:9.1%} {metrics.recall:7.1%} "
+                f"{metrics.specificity:11.1%} {metrics.f1:7.1%} "
+                f"{metrics.true_positive:3d} {metrics.false_positive:3d} "
+                f"{metrics.true_negative:3d} {metrics.false_negative:3d}"
+            )
+        lines.extend(("", "Malicious-category recall at SUSPICIOUS+:"))
+        for category, values in data["malicious_category_recall_at_suspicious"].items():
+            lines.append(
+                f"  {category:32s} {values['detected']:3d}/{values['total']:<3d} "
+                f"({values['recall']:.1%})"
+            )
+        rendered = "\n".join(lines)
+
+    if output:
+        output.write_text(rendered + "\n", encoding="utf-8")
+    else:
+        click.echo(rendered)
+
+    if report.errors:
+        raise click.ClickException(f"benchmark completed with {len(report.errors)} scan errors")
+    if fail_under_precision is not None and selected.precision < fail_under_precision:
+        raise click.ClickException(
+            f"precision {selected.precision:.4f} is below {fail_under_precision:.4f}"
+        )
+    if fail_under_recall is not None and selected.recall < fail_under_recall:
+        raise click.ClickException(
+            f"recall {selected.recall:.4f} is below {fail_under_recall:.4f}"
+        )
 
 
 @main.command()

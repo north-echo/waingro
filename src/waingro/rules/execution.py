@@ -2,7 +2,7 @@
 
 import re
 
-from waingro.analyzers.dataflow import expression_reaches_execution
+from waingro.analyzers.dataflow import expression_reaches_execution, statement_for_finding
 from waingro.analyzers.reputation import (
     USERCONTENT,
     VENDOR,
@@ -333,4 +333,244 @@ class HiddenBundledExecution(Rule):
                                 context_note=note,
                             )
                         )
+        return findings
+
+
+_REMOTE_URL_RE = re.compile(r"https?://[^\s)>\]`'\"]+", re.IGNORECASE)
+_REMOTE_EXECUTABLE_RE = re.compile(
+    r"\.(?:zip|rar|7z|exe|msi|dmg|pkg)(?:\b|[?#])",
+    re.IGNORECASE,
+)
+_ARCHIVE_PASSWORD_RE = re.compile(
+    r"(?:\bpassword\b|\bpass(?:word)?\s*:|"
+    r"\bextract\s+(?:it\s+)?(?:using|with)\s+(?:the\s+)?pass\b)",
+    re.IGNORECASE,
+)
+_RUN_ARTIFACT_RE = re.compile(
+    r"\b(?:run|execute|launch|open|install)\b",
+    re.IGNORECASE,
+)
+_REMOTE_INSTRUCTION_RE = re.compile(
+    r"\b(?:copy|paste|run|execute)\b[\s\S]{0,180}\b(?:command|code|terminal|shell|"
+    r"powershell|command prompt)\b|"
+    r"\b(?:command|code)\b[\s\S]{0,180}\b(?:copy|paste|run|execute)\b",
+    re.IGNORECASE,
+)
+_REMOTE_NAVIGATION_RE = re.compile(
+    r"\b(?:visit|open|follow|navigate\s+to|go\s+to)\b",
+    re.IGNORECASE,
+)
+
+
+def _untrusted_remote_statement(skill: ParsedSkill, statement: str) -> bool:
+    tier = classify_text(statement)
+    return tier != VENDOR and not is_first_party(statement, skill_identifiers(skill))
+
+
+@register_rule
+class PasswordProtectedRemoteExecutable(Rule):
+    rule_id = "EXEC-007"
+    title = "Password-protected remote executable"
+    description = (
+        "Detects instructions to download, unlock, and run an executable archive "
+        "from a non-vendor source"
+    )
+
+    def evaluate(self, skill: ParsedSkill) -> list[Finding]:
+        findings = []
+        seen: set[tuple[object, int | None]] = set()
+        for matched, line, fpath in search_skill_content(skill, [_REMOTE_URL_RE]):
+            statement = statement_for_finding(skill, fpath, line)
+            if not statement:
+                continue
+            if not (
+                _REMOTE_EXECUTABLE_RE.search(statement)
+                and _ARCHIVE_PASSWORD_RE.search(statement)
+                and _RUN_ARTIFACT_RE.search(statement)
+                and _untrusted_remote_statement(skill, statement)
+            ):
+                continue
+            key = (fpath, line)
+            if key in seen:
+                continue
+            seen.add(key)
+            findings.append(
+                Finding(
+                    rule_id=self.rule_id,
+                    title=self.title,
+                    description=self.description,
+                    severity=Severity.HIGH,
+                    category=FindingCategory.SUPPLY_CHAIN,
+                    file_path=fpath,
+                    line_number=line,
+                    matched_content=matched[:200],
+                    remediation=(
+                        "Do not run opaque password-protected binaries. Require a "
+                        "reviewable artifact from a verified first-party release channel."
+                    ),
+                    reference="MITRE ATT&CK T1027.013: Encrypted/Encoded File",
+                    confidence=0.95,
+                    context_note=(
+                        "The same bounded instruction downloads an executable archive, "
+                        "supplies an extraction password, and tells the agent to run it."
+                    ),
+                )
+            )
+        return findings
+
+
+@register_rule
+class MutableRemoteInstructionExecution(Rule):
+    rule_id = "EXEC-008"
+    title = "Mutable remote instructions executed"
+    description = (
+        "Detects instructions to retrieve commands from a non-vendor page and run "
+        "them without a pinned, reviewable payload"
+    )
+
+    def evaluate(self, skill: ParsedSkill) -> list[Finding]:
+        findings = []
+        seen: set[tuple[object, int | None]] = set()
+        for matched, line, fpath in search_skill_content(skill, [_REMOTE_URL_RE]):
+            if fpath.suffix.lower() not in {".md", ".txt"}:
+                continue
+            statement = statement_for_finding(skill, fpath, line)
+            url_position = statement.find(matched) if statement else -1
+            navigation = (
+                _REMOTE_NAVIGATION_RE.search(statement[max(0, url_position - 100) : url_position])
+                if url_position >= 0
+                else None
+            )
+            if not statement or not navigation or not _REMOTE_INSTRUCTION_RE.search(statement):
+                continue
+            if not _untrusted_remote_statement(skill, statement):
+                continue
+            key = (fpath, line)
+            if key in seen:
+                continue
+            seen.add(key)
+            findings.append(
+                Finding(
+                    rule_id=self.rule_id,
+                    title=self.title,
+                    description=self.description,
+                    severity=Severity.HIGH,
+                    category=FindingCategory.SUPPLY_CHAIN,
+                    file_path=fpath,
+                    line_number=line,
+                    matched_content=matched[:200],
+                    remediation=(
+                        "Pin and display the exact command or artifact in the skill so it "
+                        "can be reviewed before execution."
+                    ),
+                    reference="MITRE ATT&CK T1105: Ingress Tool Transfer",
+                    confidence=0.9,
+                    context_note=(
+                        "The page can change after review; the skill delegates command "
+                        "selection to remote mutable content. This is strong supply-chain "
+                        "risk evidence, not by itself proof of malicious intent."
+                    ),
+                )
+            )
+        return findings
+
+
+_DOWNLOAD_TO_FILE_RE = re.compile(
+    r"\b(?:curl\b[^\n]{0,500}?(?:-o|--output)\s+|"
+    r"wget\b[^\n]{0,500}?(?:-O|--output-document)\s+)"
+    r"(?P<quote>['\"]?)(?P<path>[^\s'\";&|]+)(?P=quote)",
+    re.IGNORECASE,
+)
+
+
+@register_rule
+class RemoteDownloadWriteExecute(Rule):
+    rule_id = "EXEC-009"
+    title = "Remote download-write-execute chain"
+    description = (
+        "Detects a remote payload written to disk, made executable, and launched "
+        "within one bounded command sequence"
+    )
+
+    def evaluate(self, skill: ParsedSkill) -> list[Finding]:
+        findings = []
+        for matched, line, fpath in search_skill_content(skill, [_REMOTE_URL_RE]):
+            statement = statement_for_finding(skill, fpath, line)
+            download = _DOWNLOAD_TO_FILE_RE.search(statement) if statement else None
+            if not download or not _untrusted_remote_statement(skill, statement):
+                continue
+            path = download.group("path")
+            escaped = re.escape(path)
+            make_executable = re.search(
+                rf"\bchmod\s+(?:[ugo]*\+x|7[0-7]{{2}})\s+['\"]?{escaped}(?:['\"]|\b)",
+                statement,
+                re.IGNORECASE,
+            )
+            launch = re.search(
+                rf"(?:^|&&|;|\|\|)\s*['\"]?{escaped}(?:['\"])?(?:\s|$)",
+                statement,
+                re.IGNORECASE,
+            )
+            if not make_executable or not launch:
+                continue
+            tier = classify_text(statement)
+            findings.append(
+                Finding(
+                    rule_id=self.rule_id,
+                    title=self.title,
+                    description=self.description,
+                    severity=Severity.HIGH if tier == USERCONTENT else Severity.CRITICAL,
+                    category=FindingCategory.EXECUTION,
+                    file_path=fpath,
+                    line_number=line,
+                    matched_content=matched[:200],
+                    remediation=(
+                        "Pin the artifact and verify its digest and signature before "
+                        "granting execute permission or launching it."
+                    ),
+                    reference="MITRE ATT&CK T1105 and T1204",
+                    confidence=0.85 if tier == USERCONTENT else 1.0,
+                    context_note=(
+                        "The same bounded command sequence downloads a file, marks that "
+                        "exact path executable, and launches it."
+                    ),
+                )
+            )
+        return findings
+
+
+_AUDIT_LOG_DESTRUCTION_RE = re.compile(
+    r"\brm\s+-[^\n;&|]*r[^\n;&|]*f[^\n;&|]*(?:/var/log/|"
+    r"(?:audit|security|auth)[-_./][^\s;&|]*log|\.bash_history|\.zsh_history)",
+    re.IGNORECASE,
+)
+
+
+@register_rule
+class AuditLogDestruction(Rule):
+    rule_id = "EXEC-010"
+    title = "Audit or security log destruction"
+    description = "Detects recursive forced deletion of audit, auth, or shell-history data"
+
+    def evaluate(self, skill: ParsedSkill) -> list[Finding]:
+        findings = []
+        for matched, line, fpath in search_skill_content(skill, [_AUDIT_LOG_DESTRUCTION_RE]):
+            findings.append(
+                Finding(
+                    rule_id=self.rule_id,
+                    title=self.title,
+                    description=self.description,
+                    severity=Severity.HIGH,
+                    category=FindingCategory.EXECUTION,
+                    file_path=fpath,
+                    line_number=line,
+                    matched_content=matched[:200],
+                    remediation=(
+                        "Do not erase audit or authentication logs. Use bounded retention "
+                        "and preserve an accountable recovery trail."
+                    ),
+                    reference="MITRE ATT&CK T1070.002 and T1070.003",
+                    confidence=0.9,
+                )
+            )
         return findings

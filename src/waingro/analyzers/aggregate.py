@@ -36,6 +36,7 @@ EXAMPLE_FILES = 4
 # accurately, per file.
 _REDUNDANT_IN_FILE = {
     "EXEC-005": "OBFUSC-003",
+    "EXFIL-010": "EXFIL-009",
 }
 
 _SEVERITY_ORDER = [

@@ -79,7 +79,10 @@ EXECUTION_SINK_RE = re.compile(
     re.IGNORECASE | re.VERBOSE,
 )
 
-_PIPE_SHELL_RE = re.compile(r"\|\s*(?:bash|sh|zsh|dash)(?:\s|$)", re.IGNORECASE)
+_PIPE_SHELL_RE = re.compile(
+    r"\|\s*(?:bash|sh|zsh|dash)(?=\s|$|[`'\"])",
+    re.IGNORECASE,
+)
 _ASSIGNMENT_RE = re.compile(
     r"(?:^|[;{]\s*)\s*(?:(?:const|let|var|local|export)\s+)?"
     r"([A-Za-z_$][\w$]*)\s*(?::[^=\n]+)?=(?!=)",
@@ -425,6 +428,7 @@ def _first_source_match(
     source_patterns: tuple[re.Pattern[str], ...],
     *,
     allow_shell_interpolation: bool = False,
+    allow_quoted_source: bool = False,
 ) -> re.Match[str] | None:
     matches = [
         match
@@ -432,7 +436,8 @@ def _first_source_match(
         for match in pattern.finditer(text)
         if not _is_commented(text, match.start())
         and (
-            not _is_quoted(text, match.start())
+            allow_quoted_source
+            or not _is_quoted(text, match.start())
             or (
                 allow_shell_interpolation
                 and _quote_at(text, match.start()) == '"'
@@ -449,19 +454,27 @@ def _source_is_inside_sink(
     sink_pattern: re.Pattern[str],
     *,
     allow_shell_interpolation: bool = False,
+    allow_quoted_source: bool = False,
 ) -> bool:
     """Return whether a source is lexically nested in a preceding sink call."""
     source = _first_source_match(
         clause,
         source_patterns,
         allow_shell_interpolation=allow_shell_interpolation,
+        allow_quoted_source=allow_quoted_source,
     )
     if not source:
         return False
     source_pos = source.start()
-    sink_matches = [
-        match for match in _unquoted_matches(sink_pattern, clause) if match.start() < source_pos
-    ]
+    sink_matches = (
+        [match for match in sink_pattern.finditer(clause) if match.start() < source_pos]
+        if allow_quoted_source
+        else [
+            match
+            for match in _unquoted_matches(sink_pattern, clause)
+            if match.start() < source_pos
+        ]
+    )
     if not sink_matches:
         return False
     sink = sink_matches[-1]
@@ -469,7 +482,11 @@ def _source_is_inside_sink(
     # Call-shaped sinks must have an opening delimiter that has not closed
     # before the source. Shell and PowerShell command sinks are deliberately
     # delimiter-free, but still require the value to follow the sink.
-    if not _is_quoted(clause, source_pos) and between.count("(") > between.count(")"):
+    if (
+        allow_quoted_source or not _is_quoted(clause, source_pos)
+    ) and between.count("(") > between.count(")"):
+        return True
+    if re.match(r"curl\b", sink.group(0).strip(), re.IGNORECASE):
         return True
     is_command_sink = sink.group(0).strip().lower() in {
         "eval",
@@ -487,7 +504,12 @@ def _assigned_name(
     allow_quoted_source: bool = False,
 ) -> str | None:
     if allow_quoted_source:
-        sources = [match for pattern in source_patterns for match in pattern.finditer(statement)]
+        sources = [
+            match
+            for pattern in source_patterns
+            for match in pattern.finditer(statement)
+            if not _is_commented(statement, match.start())
+        ]
         source = min(sources, key=lambda match: match.start(), default=None)
     else:
         source = _first_source_match(statement, source_patterns)
@@ -532,6 +554,23 @@ def statement_for_finding(
     return "\n".join(lines[start:end])
 
 
+def scope_for_finding(
+    skill: ParsedSkill,
+    file_path: Path,
+    line_number: int | None,
+) -> str:
+    """Return the lexical function or fenced scope containing a finding."""
+    content, line_base = _source_for_finding(skill, file_path, line_number)
+    if not content or is_generated_or_vendored(file_path, content):
+        return ""
+    lines = content.splitlines()
+    index = (line_number or line_base + 1) - line_base - 1
+    if not 0 <= index < len(lines):
+        return ""
+    start, end = _scope_bounds(lines, index, file_path)
+    return "\n".join(lines[start:end])
+
+
 def expression_reaches_sink(
     skill: ParsedSkill,
     file_path: Path,
@@ -540,6 +579,7 @@ def expression_reaches_sink(
     sink_pattern: re.Pattern[str],
     *,
     max_aliases: int = 8,
+    allow_quoted_source: bool = False,
 ) -> bool:
     """Whether a source reaches a later sink through exact-name assignments.
 
@@ -553,7 +593,10 @@ def expression_reaches_sink(
     if not content or is_generated_or_vendored(file_path, content):
         return False
     if file_path.suffix.lower() == ".py":
-        content = _without_python_strings_and_comments(content)
+        content = _without_python_strings_and_comments(
+            content,
+            mask_strings=not allow_quoted_source,
+        )
     elif file_path.suffix.lower() in {".cjs", ".js", ".mjs", ".ts"}:
         content = _without_c_block_comments(content)
     lines = content.splitlines()
@@ -566,23 +609,43 @@ def expression_reaches_sink(
     clauses = _clauses(statement)
 
     for clause in clauses:
-        if _source_is_inside_sink(clause, source_patterns, sink_pattern):
+        if _source_is_inside_sink(
+            clause,
+            source_patterns,
+            sink_pattern,
+            allow_quoted_source=allow_quoted_source,
+        ):
             return True
 
-    source_name = _assigned_name(statement, source_patterns)
+    source_name = _assigned_name(
+        statement,
+        source_patterns,
+        allow_quoted_source=allow_quoted_source,
+    )
     if not source_name:
         return False
 
     _scope_start, scope_end = _scope_bounds(lines, index, file_path)
     tracked = {source_name}
     source_clause_index = next(
-        (i for i, clause in enumerate(clauses) if _first_source_match(clause, source_patterns)),
+        (
+            i
+            for i, clause in enumerate(clauses)
+            if _first_source_match(
+                clause,
+                source_patterns,
+                allow_quoted_source=allow_quoted_source,
+            )
+        ),
         len(clauses) - 1,
     )
     candidates = clauses[source_clause_index + 1 :]
-    candidates.extend(
-        clause for candidate in lines[stmt_end:scope_end] for clause in _clauses(candidate)
-    )
+    cursor = stmt_end
+    while cursor < scope_end:
+        candidate_start, candidate_end = _statement_bounds(lines, cursor)
+        candidate_end = min(candidate_end, scope_end)
+        candidates.extend(_clauses("\n".join(lines[candidate_start:candidate_end])))
+        cursor = max(candidate_end, cursor + 1)
 
     for clause in candidates:
         previously_tracked = set(tracked)
@@ -595,6 +658,7 @@ def expression_reaches_sink(
                 value_text,
                 (_name_re(name),),
                 allow_shell_interpolation=True,
+                allow_quoted_source=allow_quoted_source,
             )
         }
         if used_names and _unquoted_matches(sink_pattern, clause):
@@ -634,27 +698,52 @@ def expression_reaches_execution(
 
     stmt_start, stmt_end = _statement_bounds(lines, index)
     statement = "\n".join(lines[stmt_start:stmt_end])
+    # Backticks and quotes in SKILL.md are presentation syntax around commands,
+    # not runtime string literals. Treat a source expression inside them as
+    # executable instruction text while retaining quote masking for scripts.
+    allow_quoted_source = file_path.name == "SKILL.md"
 
     clauses = _clauses(statement)
 
     # A source nested in an execution call, including a shell pipeline, is a
     # direct flow. Mere co-occurrence within the same statement is not.
     for clause in clauses:
-        source_match = _first_source_match(clause, source_patterns)
+        source_match = _first_source_match(
+            clause,
+            source_patterns,
+            allow_quoted_source=allow_quoted_source,
+        )
         if source_match and (
-            _source_is_inside_sink(clause, source_patterns, sink_pattern)
+            _source_is_inside_sink(
+                clause,
+                source_patterns,
+                sink_pattern,
+                allow_quoted_source=allow_quoted_source,
+            )
             or _PIPE_SHELL_RE.search(clause[source_match.start() :])
         ):
             return True
 
-    name = _assigned_name(statement, source_patterns)
+    name = _assigned_name(
+        statement,
+        source_patterns,
+        allow_quoted_source=allow_quoted_source,
+    )
     if not name:
         return False
 
     _scope_start, scope_end = _scope_bounds(lines, index, file_path)
     name_pattern = _name_re(name)
     source_clause_index = next(
-        (i for i, clause in enumerate(clauses) if _first_source_match(clause, source_patterns)),
+        (
+            i
+            for i, clause in enumerate(clauses)
+            if _first_source_match(
+                clause,
+                source_patterns,
+                allow_quoted_source=allow_quoted_source,
+            )
+        ),
         len(clauses) - 1,
     )
     candidates = clauses[source_clause_index + 1 :]

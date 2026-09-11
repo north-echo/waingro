@@ -22,6 +22,7 @@ class FindingCategory(StrEnum):
     INJECTION = "injection"
     SOCIAL_ENGINEERING = "social-engineering"
     TYPOSQUATTING = "typosquatting"
+    BEHAVIORAL_MISMATCH = "behavioral-mismatch"
     # MCP-specific categories
     SUPPLY_CHAIN = "supply-chain"
     SCOPE_ESCALATION = "scope-escalation"
@@ -58,6 +59,7 @@ class SkillMetadata:
 @dataclass
 class BundledFileContent:
     """Content of a bundled script file with its path."""
+
     path: Path
     content: str
 
@@ -86,13 +88,44 @@ class ScanResult:
 
     @property
     def verdict(self) -> str:
+        """Classify evidence without treating severity as proof of intent.
+
+        A critical primitive such as ``curl | bash`` is dangerous, but it is
+        not by itself enough to call an author malicious. MALICIOUS is reserved
+        for a near-unambiguous attack primitive or corroborating high-confidence
+        evidence across multiple attack stages. Probable security scanners are
+        routed to REVIEW so their signature libraries do not become accusations.
+        """
         high_confidence = [f for f in self.findings if f.confidence >= 0.5]
-        if any(f.severity == Severity.CRITICAL for f in high_confidence):
-            return "MALICIOUS"
-        if any(f.severity == Severity.HIGH for f in high_confidence):
-            return "SUSPICIOUS"
         if self.findings and not high_confidence:
             return "REVIEW"
+        if self.security_tool_score >= 0.3 and high_confidence:
+            return "REVIEW"
+
+        direct_attack_rules = {"NET-001", "NET-004"}
+        if any(
+            f.rule_id in direct_attack_rules and f.severity == Severity.CRITICAL
+            for f in high_confidence
+        ):
+            return "MALICIOUS"
+
+        critical = [f for f in high_confidence if f.severity == Severity.CRITICAL]
+        rules_by_file: dict[str, set[str]] = {}
+        for finding in high_confidence:
+            rules_by_file.setdefault(str(finding.file_path), set()).add(finding.rule_id)
+
+        encoded_execution = {"EXEC-002", "OBFUSC-001"}
+        c2_execution = {"EXEC-001", "EXEC-006", "EXEC-009"}
+        if critical and any(
+            encoded_execution <= rules
+            or ("NET-002" in rules and bool(rules & c2_execution))
+            for rules in rules_by_file.values()
+        ):
+            return "MALICIOUS"
+        if critical:
+            return "SUSPICIOUS"
+        if any(f.severity == Severity.HIGH for f in high_confidence):
+            return "SUSPICIOUS"
         if any(f.severity in (Severity.MEDIUM, Severity.LOW) for f in self.findings):
             return "WARNING"
         return "CLEAN"

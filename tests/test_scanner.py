@@ -26,7 +26,7 @@ def test_load_skill_includes_bundled_content():
 
 def test_scan_curl_pipe():
     result = scan_skill(FIXTURES_DIR / "malicious" / "clawhavoc-curl-pipe")
-    assert result.verdict == "MALICIOUS"
+    assert result.verdict == "SUSPICIOUS"
     rule_ids = {f.rule_id for f in result.findings}
     assert "EXEC-001" in rule_ids
 

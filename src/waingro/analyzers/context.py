@@ -1,7 +1,6 @@
 """Post-analysis context scoring to identify security tools with detection signatures."""
 
 import re
-from contextlib import suppress
 
 from waingro.models import Finding, ParsedSkill
 from waingro.parsers.sections import find_section_for_line
@@ -15,6 +14,7 @@ SECURITY_KEYWORDS = [
     "guard",
     "shield",
     "defender",
+    "gatekeeper",
     "firewall",
     "blocker",
     "lint",
@@ -123,9 +123,13 @@ def adjust_finding_confidence(
             section = find_section_for_line(sections, finding.line_number)
 
         relative_path = finding.file_path
+        is_skill_relative = False
         if skill:
-            with suppress(ValueError):
+            try:
                 relative_path = finding.file_path.relative_to(skill.path)
+                is_skill_relative = True
+            except ValueError:
+                pass
         fixture_parts = {
             "test",
             "tests",
@@ -135,17 +139,37 @@ def adjust_finding_confidence(
             "fixtures",
             "mocks",
         }
+        relative_parts = {part.lower() for part in relative_path.parts}
+        passive_parts = fixture_parts | {"benchmark", "benchmarks", "eval", "evals"}
+        passive_names = {
+            "benchmark",
+            "benchmarks",
+            "eval",
+            "evals",
+            "fixture",
+            "fixtures",
+        }
+        is_passive_resource = is_skill_relative and (
+            bool(relative_parts & passive_parts)
+            or relative_path.stem.lower() in passive_names
+        )
         is_defensive_fixture = (
             skill is not None
             and security_tool_score >= 0.3
-            and bool({part.lower() for part in relative_path.parts} & fixture_parts)
+            and bool(relative_parts & fixture_parts)
         )
         is_detection_section = bool(section and section.category == "detection")
 
-        if is_defensive_fixture or is_detection_section:
+        if is_passive_resource or is_defensive_fixture or is_detection_section:
             finding.confidence = min(finding.confidence, 0.1)
             reason = (
-                "security-tool test/fixture path" if is_defensive_fixture else "detection section"
+                "security-tool test/fixture path"
+                if is_defensive_fixture
+                else (
+                    "passive benchmark/eval/test resource"
+                    if is_passive_resource
+                    else "detection section"
+                )
             )
             finding.context_note = (
                 f"Pattern appears in a {reason}; treat it as evidence to review, "

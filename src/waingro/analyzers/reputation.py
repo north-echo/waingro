@@ -125,9 +125,14 @@ def is_first_party(text: str, identifiers: set[str]) -> bool:
         label = _registrable_label(host)
         if len(label) < 4:
             continue
-        for ident in identifiers:
-            if label == ident or label in ident or ident in label:
-                return True
+        for label_token in _tokens(label):
+            for ident in identifiers:
+                if (
+                    label_token == ident
+                    or label_token in ident
+                    or ident in label_token
+                ):
+                    return True
     return False
 
 
@@ -140,6 +145,16 @@ def skill_identifiers(skill) -> set[str]:
         if isinstance(value, str) and value:
             homepage = value
             break
+    if not homepage:
+        nested = fm.get("metadata")
+        if isinstance(nested, dict):
+            openclaw = nested.get("openclaw")
+            if isinstance(openclaw, dict):
+                for key in ("homepage", "repository", "url", "website"):
+                    value = openclaw.get(key)
+                    if isinstance(value, str) and value:
+                        homepage = value
+                        break
     idents = _tokens(
         skill.metadata.name,
         skill.path.name,

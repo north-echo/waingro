@@ -245,3 +245,55 @@ class MachineObfuscatedBundle(Rule):
                 ),
             ))
         return findings
+
+
+_UNICODE_TAG_RUN_RE = re.compile(r"[\U000e0000-\U000e007f]{8,}")
+
+
+def _decode_unicode_tags(value: str) -> str:
+    """Render Unicode tag characters as their hidden ASCII payload."""
+    decoded = []
+    for character in value:
+        codepoint = ord(character)
+        if 0xE0020 <= codepoint <= 0xE007E:
+            decoded.append(chr(codepoint - 0xE0000))
+    return "".join(decoded)
+
+
+@register_rule
+class InvisibleUnicodeInstructions(Rule):
+    rule_id = "OBFUSC-004"
+    title = "Invisible Unicode instruction payload"
+    description = (
+        "Detects runs of Unicode tag characters that hide agent-readable text "
+        "from normal visual review"
+    )
+
+    def evaluate(self, skill: ParsedSkill) -> list[Finding]:
+        findings = []
+        for matched, line, fpath in search_skill_content(skill, [_UNICODE_TAG_RUN_RE]):
+            preview = _decode_unicode_tags(matched)[:160]
+            findings.append(
+                Finding(
+                    rule_id=self.rule_id,
+                    title=self.title,
+                    description=self.description,
+                    severity=Severity.HIGH,
+                    category=FindingCategory.OBFUSCATION,
+                    file_path=fpath,
+                    line_number=line,
+                    matched_content=(preview or "Unicode tag-character run"),
+                    remediation=(
+                        "Remove invisible tag characters and express every instruction "
+                        "as reviewable visible text."
+                    ),
+                    reference="Unicode Technical Report #36: Unicode Security Considerations",
+                    confidence=1.0,
+                    context_note=(
+                        "The displayed evidence is a decoded preview of text hidden in "
+                        "Unicode tag characters. Hidden text is strong evasion evidence, "
+                        "but the decoded instruction still requires review."
+                    ),
+                )
+            )
+        return findings

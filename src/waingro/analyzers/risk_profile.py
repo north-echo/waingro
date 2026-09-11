@@ -23,6 +23,10 @@ CATEGORY_DIMENSION = {
     FindingCategory.OBFUSCATION: "execution_risk",
     FindingCategory.SOCIAL_ENGINEERING: "execution_risk",
     FindingCategory.TYPOSQUATTING: "execution_risk",
+    FindingCategory.BEHAVIORAL_MISMATCH: "execution_risk",
+    FindingCategory.SUPPLY_CHAIN: "execution_risk",
+    FindingCategory.SCOPE_ESCALATION: "execution_risk",
+    FindingCategory.CROSS_TOOL: "execution_risk",
 }
 
 

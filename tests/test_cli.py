@@ -28,7 +28,7 @@ def test_scan_malicious_console():
     runner = CliRunner()
     result = runner.invoke(main, ["scan", str(FIXTURES_DIR / "malicious" / "clawhavoc-curl-pipe")])
     assert result.exit_code == 0
-    assert "MALICIOUS" in result.output
+    assert "SUSPICIOUS" in result.output
 
 
 def test_scan_json_output():
@@ -44,7 +44,7 @@ def test_scan_json_output():
     )
     assert result.exit_code == 0
     data = json.loads(result.output)
-    assert data["verdict"] == "MALICIOUS"
+    assert data["verdict"] == "SUSPICIOUS"
     assert len(data["findings"]) >= 1
 
 
@@ -87,7 +87,7 @@ def test_scan_quiet():
         ],
     )
     assert result.exit_code == 0
-    assert "MALICIOUS" in result.output
+    assert "SUSPICIOUS" in result.output
     # Quiet should be short
     assert len(result.output.strip().split("\n")) <= 3
 

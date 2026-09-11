@@ -1,6 +1,6 @@
 """Tests for persistence rules."""
 
-from waingro.rules.persistence import CrontabModification
+from waingro.rules.persistence import CrontabModification, PrivilegedWorldWritablePath
 
 
 def test_persist_001_crontab(malicious_persistence):
@@ -29,3 +29,29 @@ def test_persist_001_reboot(make_inline_skill):
     assert findings[0].rule_id == "PERSIST-001"
     matched_all = " ".join(f.matched_content for f in findings)
     assert "@reboot" in matched_all or "crontab" in matched_all
+
+
+def test_persist_005_root_owned_world_writable_path(make_inline_skill):
+    skill = make_inline_skill(
+        code_blocks=[
+            {
+                "language": "bash",
+                "line": 7,
+                "content": (
+                    "chmod 777 /opt/shared-workspace\n"
+                    "sudo chown -R root:root /opt/shared-workspace"
+                ),
+            }
+        ]
+    )
+
+    findings = PrivilegedWorldWritablePath().evaluate(skill)
+
+    assert len(findings) == 1
+    assert findings[0].rule_id == "PERSIST-005"
+
+
+def test_persist_005_tmp_scratch_permissions_are_ignored(make_inline_skill):
+    skill = make_inline_skill(body="chmod 777 /tmp/build-output\nsudo chown root /tmp/build-output")
+
+    assert PrivilegedWorldWritablePath().evaluate(skill) == []

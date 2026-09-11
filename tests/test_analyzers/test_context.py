@@ -210,13 +210,22 @@ def test_security_tool_fixture_path_is_low_confidence(make_inline_skill):
     assert "security-tool test/fixture path" in (adjusted[0].context_note or "")
 
 
-def test_fixture_path_alone_does_not_reduce_confidence(make_inline_skill):
+def test_test_path_is_low_confidence_even_without_security_profile(make_inline_skill):
     skill = make_inline_skill()
     finding = _make_finding("EXEC-002", severity=Severity.CRITICAL)
     finding.file_path = skill.path / "tests" / "payload.py"
     adjusted = adjust_finding_confidence([finding], security_tool_score=0.0, skill=skill)
-    assert adjusted[0].confidence == 1.0
-    assert adjusted[0].context_note is None
+    assert adjusted[0].confidence == 0.1
+    assert "passive benchmark/eval/test resource" in (adjusted[0].context_note or "")
+
+
+def test_evals_file_is_low_confidence(make_inline_skill):
+    skill = make_inline_skill()
+    finding = _make_finding("EXEC-001", severity=Severity.CRITICAL)
+    finding.file_path = skill.path / "benchmark" / "evals.json"
+    adjusted = adjust_finding_confidence([finding], security_tool_score=0.0, skill=skill)
+
+    assert adjusted[0].confidence == 0.1
 
 
 def test_detection_section_is_low_confidence_without_global_score(make_inline_skill):
@@ -224,6 +233,7 @@ def test_detection_section_is_low_confidence_without_global_score(make_inline_sk
     skill = make_inline_skill(body=body)
     skill.sections = parse_sections(body)
     finding = _make_finding("OBFUSC-001", severity=Severity.CRITICAL)
+    finding.file_path = skill.path / "SKILL.md"
     finding.line_number = 7
     adjusted = adjust_finding_confidence([finding], security_tool_score=0.1, skill=skill)
     assert adjusted[0].confidence == 0.1
@@ -265,11 +275,15 @@ def test_verdict_review_when_all_low_confidence(make_inline_skill):
 
 
 def test_verdict_malicious_with_high_confidence_critical(make_inline_skill):
-    """MALICIOUS verdict preserved when high-confidence critical findings exist."""
+    """A near-unambiguous direct attack primitive can be MALICIOUS."""
     from waingro.models import ScanResult, SkillMetadata
 
     findings = [
-        _make_finding("NET-002", severity=Severity.CRITICAL),  # confidence stays 1.0
+        _make_finding(
+            "NET-001",
+            severity=Severity.CRITICAL,
+            category=FindingCategory.NETWORK,
+        ),
     ]
 
     result = ScanResult(
@@ -277,6 +291,97 @@ def test_verdict_malicious_with_high_confidence_critical(make_inline_skill):
         metadata=SkillMetadata(name="test", description=None, version=None, author=None),
         findings=findings,
     )
+    assert result.verdict == "MALICIOUS"
+
+
+def test_single_critical_primitive_is_suspicious_not_malicious():
+    """Severity alone is not evidence of author intent."""
+    from waingro.models import ScanResult, SkillMetadata
+
+    result = ScanResult(
+        skill_path=Path("/tmp/test"),  # noqa: S108
+        metadata=SkillMetadata(name="test", description=None, version=None, author=None),
+        findings=[
+            _make_finding(
+                "EXEC-001",
+                severity=Severity.CRITICAL,
+                category=FindingCategory.EXECUTION,
+            )
+        ],
+    )
+
+    assert result.verdict == "SUSPICIOUS"
+
+
+def test_probable_security_scanner_routes_to_review():
+    """Signature libraries must not become a malicious-author classification."""
+    from waingro.models import ScanResult, SkillMetadata
+
+    result = ScanResult(
+        skill_path=Path("/tmp/test"),  # noqa: S108
+        metadata=SkillMetadata(name="test", description=None, version=None, author=None),
+        findings=[
+            _make_finding(
+                "EXEC-002",
+                severity=Severity.CRITICAL,
+                category=FindingCategory.EXECUTION,
+            ),
+            _make_finding(
+                "OBFUSC-001",
+                severity=Severity.CRITICAL,
+                category=FindingCategory.OBFUSCATION,
+            ),
+        ],
+        security_tool_score=0.8,
+    )
+
+    assert result.verdict == "REVIEW"
+
+
+def test_corroborating_attack_stages_must_share_a_file():
+    """Unrelated findings in separate resources do not form an attack chain."""
+    from waingro.models import ScanResult, SkillMetadata
+
+    execution = _make_finding(
+        "EXEC-001",
+        severity=Severity.CRITICAL,
+        category=FindingCategory.EXECUTION,
+    )
+    exfiltration = _make_finding(
+        "EXFIL-001",
+        severity=Severity.HIGH,
+        category=FindingCategory.EXFILTRATION,
+    )
+    exfiltration.file_path = Path("/tmp/test/reference.md")  # noqa: S108
+    result = ScanResult(
+        skill_path=Path("/tmp/test"),  # noqa: S108
+        metadata=SkillMetadata(name="test", description=None, version=None, author=None),
+        findings=[execution, exfiltration],
+    )
+
+    assert result.verdict == "SUSPICIOUS"
+
+
+def test_corroborating_attack_stages_in_one_file_can_be_malicious():
+    from waingro.models import ScanResult, SkillMetadata
+
+    result = ScanResult(
+        skill_path=Path("/tmp/test"),  # noqa: S108
+        metadata=SkillMetadata(name="test", description=None, version=None, author=None),
+        findings=[
+            _make_finding(
+                "EXEC-002",
+                severity=Severity.CRITICAL,
+                category=FindingCategory.EXECUTION,
+            ),
+            _make_finding(
+                "OBFUSC-001",
+                severity=Severity.CRITICAL,
+                category=FindingCategory.OBFUSCATION,
+            ),
+        ],
+    )
+
     assert result.verdict == "MALICIOUS"
 
 

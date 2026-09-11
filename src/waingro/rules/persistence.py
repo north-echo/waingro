@@ -2,6 +2,7 @@
 
 import re
 
+from waingro.analyzers.dataflow import scope_for_finding
 from waingro.models import Finding, FindingCategory, ParsedSkill, Severity
 from waingro.rules import Rule, register_rule, search_skill_content
 
@@ -134,6 +135,47 @@ class ShellProfileModification(Rule):
                     matched_content=matched[:200],
                     remediation="Skills should not modify shell profile files.",
                     reference=None,
+                )
+            )
+        return findings
+
+
+@register_rule
+class PrivilegedWorldWritablePath(Rule):
+    rule_id = "PERSIST-005"
+    title = "Privileged world-writable path"
+    description = (
+        "Detects world-writable permissions combined with root ownership or sudo "
+        "in the same lexical scope"
+    )
+
+    _patterns = [
+        re.compile(r"\bchmod\s+(?:-R\s+)?(?:0777|777)\s+(/(?!tmp(?:/|\b))[^\s;&|]+)"),
+    ]
+    _privileged = re.compile(r"\b(?:sudo\b|chown\s+(?:-R\s+)?root(?::root)?)", re.IGNORECASE)
+
+    def evaluate(self, skill: ParsedSkill) -> list[Finding]:
+        findings = []
+        for matched, line, fpath in search_skill_content(skill, self._patterns):
+            scope = scope_for_finding(skill, fpath, line)
+            if not scope or not self._privileged.search(scope):
+                continue
+            findings.append(
+                Finding(
+                    rule_id=self.rule_id,
+                    title=self.title,
+                    description=self.description,
+                    severity=Severity.HIGH,
+                    category=FindingCategory.PERSISTENCE,
+                    file_path=fpath,
+                    line_number=line,
+                    matched_content=matched[:200],
+                    remediation=(
+                        "Use the narrowest owner, group, and permission bits required. "
+                        "Never combine root ownership with mode 777."
+                    ),
+                    reference="CWE-732: Incorrect Permission Assignment for Critical Resource",
+                    confidence=0.9,
                 )
             )
         return findings

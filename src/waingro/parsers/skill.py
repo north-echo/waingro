@@ -10,7 +10,24 @@ from waingro.parsers.sections import parse_sections
 
 FRONTMATTER_RE = re.compile(r"^---\s*\n(.*?)\n---\s*\n", re.DOTALL)
 CODE_BLOCK_RE = re.compile(r"^```(\w*)\n(.*?)^```", re.MULTILINE | re.DOTALL)
-BUNDLED_EXTENSIONS = {".sh", ".py", ".js", ".json"}
+BUNDLED_EXTENSIONS = {
+    ".bash",
+    ".cjs",
+    ".js",
+    ".json",
+    ".md",
+    ".mjs",
+    ".ps1",
+    ".py",
+    ".sh",
+    ".toml",
+    ".ts",
+    ".txt",
+    ".yaml",
+    ".yml",
+    ".zsh",
+}
+MAX_BUNDLED_DEPTH = 2
 
 
 def _optional_text(value) -> str | None:
@@ -89,7 +106,14 @@ def extract_code_blocks(content: str, start_line_offset: int = 0) -> list[dict]:
 
 
 def discover_bundled_files(skill_dir: Path) -> list[Path]:
-    """Find .sh, .py, .js, .json files in the skill directory (recursive)."""
+    """Find relevant bundled files no more than two levels below a skill.
+
+    Markdown and text resources are executable input in an agent skill when the
+    root instructions tell the agent to consume them. Conversely, unbounded
+    recursion pulls nested fixtures, vendored projects, and backups into the
+    parent skill's verdict. The two-level boundary covers ordinary ``scripts/``
+    and ``references/`` layouts without conflating nested projects.
+    """
     files = []
     if not skill_dir.is_dir():
         return files
@@ -99,8 +123,10 @@ def discover_bundled_files(skill_dir: Path) -> list[Path]:
             if path.is_symlink() or not path.is_file():
                 continue
             try:
-                path.resolve().relative_to(root)
+                relative = path.resolve().relative_to(root)
             except ValueError:
+                continue
+            if path.name.lower() == "skill.md" or len(relative.parts) > MAX_BUNDLED_DEPTH:
                 continue
             files.append(path)
     return files

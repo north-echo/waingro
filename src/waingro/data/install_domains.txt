@@ -66,3 +66,7 @@ usercontent jsdelivr.net
 usercontent cdn.jsdelivr.net
 usercontent unpkg.com
 usercontent statically.io
+usercontent glot.io
+usercontent paste.c-net.org
+usercontent pastebin.com
+usercontent rentry.co

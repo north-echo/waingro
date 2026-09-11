@@ -89,6 +89,36 @@ def test_bundled_discovery_does_not_follow_external_file_symlink(tmp_path):
     assert discover_bundled_files(skill_dir) == []
 
 
+def test_bundled_discovery_includes_instruction_and_script_formats(tmp_path):
+    references = tmp_path / "references"
+    references.mkdir()
+    markdown = references / "policy.md"
+    typescript = tmp_path / "handler.ts"
+    markdown.write_text("instructions\n", encoding="utf-8")
+    typescript.write_text("export const value = 1;\n", encoding="utf-8")
+
+    assert set(discover_bundled_files(tmp_path)) == {markdown, typescript}
+
+
+def test_bundled_discovery_stops_after_two_levels(tmp_path):
+    included_dir = tmp_path / "references"
+    excluded_dir = included_dir / "nested"
+    excluded_dir.mkdir(parents=True)
+    included = included_dir / "policy.md"
+    excluded = excluded_dir / "fixture.md"
+    included.write_text("included\n", encoding="utf-8")
+    excluded.write_text("excluded\n", encoding="utf-8")
+
+    assert discover_bundled_files(tmp_path) == [included]
+
+
+def test_bundled_discovery_does_not_rescan_case_variant_manifest(tmp_path):
+    manifest = tmp_path / "skill.md"
+    manifest.write_text("instructions\n", encoding="utf-8")
+
+    assert discover_bundled_files(tmp_path) == []
+
+
 def test_parse_skill_rejects_directory_without_manifest(tmp_path):
     try:
         parse_skill(tmp_path)

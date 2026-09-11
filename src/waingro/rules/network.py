@@ -59,6 +59,9 @@ class ReverseShell(Rule):
         re.compile(r"bash\s+-i\s+>&\s*/dev/tcp/"),
         re.compile(r"import\s+socket\s*,\s*subprocess\s*,\s*os"),
         re.compile(r"nc\s+(-e|--exec)\s+/bin/(sh|bash)"),
+        re.compile(r"\bnc\s+[^\n]{0,120}\s-e\s+/bin/(?:sh|bash)\b"),
+        re.compile(r"\bnc\s+[^\n]{0,120}\|\s*/bin/(?:sh|bash)\b"),
+        re.compile(r"\bnc\s+[^\n]{0,120}\s-c\s+['\"]?/bin/(?:sh|bash)\b"),
         re.compile(r"fsockopen\s*\("),
         re.compile(r"ruby\s+-rsocket"),
         re.compile(r"/dev/tcp/\d+\.\d+\.\d+\.\d+/\d+"),
@@ -167,6 +170,14 @@ class DnsExfiltration(Rule):
         re.compile(_CMD_START + r"dig\s+(?:[+-]\S+\s+)*" + _ENCODED_LABEL, re.IGNORECASE),
         re.compile(_CMD_START + r"nslookup\s+(?:-\S+\s+)*" + _ENCODED_LABEL, re.IGNORECASE),
         re.compile(_CMD_START + r"host\s+(?:-\S+\s+)*" + _ENCODED_LABEL, re.IGNORECASE),
+        re.compile(
+            _CMD_START
+            + r"(?:dig|nslookup|host)\s+[^\n]{0,180}"
+            + r"\$\([^\n)]*(?:base64|xxd|openssl|"
+            + r"\$[A-Z0-9_]*(?:KEY|TOKEN|SECRET|PASSWORD))[^\n)]*\)\."
+            + r"[A-Za-z0-9.-]+\.[A-Za-z]{2,24}\b",
+            re.IGNORECASE,
+        ),
         re.compile(r"\bdig\s+(?:[+-]\S+\s+)*\S*\.data\.", re.IGNORECASE),
         # Splitting base64 into 63-char chunks is DNS label sizing and has
         # essentially one purpose.
@@ -243,6 +254,9 @@ _MACHINE_IDENTITY_PATTERNS = (
     re.compile(r"\bDeno\.hostname\s*\("),
     re.compile(r"\bprocess\.env\.(?:COMPUTERNAME|HOSTNAME)\b"),
     re.compile(r"\$\(\s*hostname\b"),
+    re.compile(r"\$\(\s*uname\s+(?:-[amnoprsv]+|--all)\b"),
+    re.compile(r"\bos\.uname\s*\("),
+    re.compile(r"\bplatform\.platform\s*\("),
 )
 _NETWORK_SEND_RE = re.compile(
     r"(?:"
@@ -415,6 +429,7 @@ class MachineIdentityTransmission(Rule):
                 line,
                 _MACHINE_IDENTITY_PATTERNS,
                 _NETWORK_SEND_RE,
+                allow_quoted_source=fpath.name == "SKILL.md",
             ):
                 continue
             findings.append(
