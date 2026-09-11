@@ -1,3 +1,5 @@
+![WAINGRO security scanner monitoring a server room](assets/waingro-banner.jpg)
+
 # WAINGRO
 
 AI Agent Security Scanner. Detects malicious patterns in OpenClaw skills and MCP (Model Context Protocol) servers before you install them.
