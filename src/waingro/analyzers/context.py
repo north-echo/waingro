@@ -101,10 +101,11 @@ def compute_security_tool_score(
     """Return 0.0 (not a security tool) to 1.0 (almost certainly a security tool)."""
     score = 0.0
 
-    # Metadata signals (max +0.35)
+    # Metadata signals. Three independent defensive terms are enough to cross
+    # the review threshold; a single camouflage term is not.
     name_desc = f"{skill.metadata.name} {skill.metadata.description or ''}".lower()
     keyword_hits = sum(1 for kw in SECURITY_KEYWORDS if kw in name_desc)
-    score += min(keyword_hits * 0.1, 0.25)
+    score += min(keyword_hits * 0.1, 0.30)
 
     raw_fm = skill.metadata.raw_frontmatter
     if raw_fm.get("security_tool") or raw_fm.get("contains_threat_signatures"):
@@ -123,16 +124,6 @@ def compute_security_tool_score(
 
     marker_hits = sum(1 for m in DETECTION_MARKERS if m in body_lower)
     score += min(marker_hits * 0.05, 0.10)
-
-    # Multi-rule signals (max +0.30)
-    categories_hit = {f.category for f in findings}
-    if len(categories_hit) >= 4:
-        score += 0.15
-    if len(categories_hit) >= 6:
-        score += 0.10
-    has_c2 = any(f.rule_id == "NET-002" for f in findings)
-    if not has_c2 and len(findings) >= 5:
-        score += 0.05
 
     # Section-aware signals (Layer 2 enhancement)
     if skill.sections:

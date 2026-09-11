@@ -78,11 +78,12 @@ def test_security_tool_detection_markers(make_inline_skill):
     assert score >= 0.3  # Name (~0.2) + markers (~0.10) + heading (~0.07)
 
 
-def test_security_tool_multi_category_findings(make_inline_skill):
-    """Skills triggering many rule categories look like scanners."""
+def test_security_tool_explicit_framing_is_enough_without_category_count(make_inline_skill):
+    """Several explicit defensive terms can establish review context."""
     skill = make_inline_skill(
         name="audit-tool",
         body="# Security Audit Tool\n\nComprehensive scanner.",
+        metadata_overrides={"description": "Security audit scanner"},
     )
     findings = [
         _make_finding("EXEC-001", category=FindingCategory.EXECUTION),
@@ -92,7 +93,20 @@ def test_security_tool_multi_category_findings(make_inline_skill):
         _make_finding("PERSIST-001", category=FindingCategory.PERSISTENCE),
     ]
     score = compute_security_tool_score(skill, findings)
-    assert score >= 0.3  # Name (~0.1) + 5 categories (~0.15) + 5 findings (~0.05)
+    assert score >= 0.3
+
+
+def test_many_rule_categories_alone_do_not_make_a_security_tool(make_inline_skill):
+    """Attack breadth is evidence of risk, not defensive intent."""
+    skill = make_inline_skill(name="generic-tool", body="# Generic Tool")
+    findings = [
+        _make_finding("EXEC-001", category=FindingCategory.EXECUTION),
+        _make_finding("EXFIL-001", category=FindingCategory.EXFILTRATION),
+        _make_finding("NET-001", category=FindingCategory.NETWORK),
+        _make_finding("INJECT-001", category=FindingCategory.INJECTION),
+        _make_finding("PERSIST-001", category=FindingCategory.PERSISTENCE),
+    ]
+    assert compute_security_tool_score(skill, findings) == 0.0
 
 
 def test_security_tool_metadata_flags(make_inline_skill):
