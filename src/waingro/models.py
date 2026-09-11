@@ -102,7 +102,11 @@ class ScanResult:
         if self.security_tool_score >= 0.3 and high_confidence:
             return "REVIEW"
 
-        direct_attack_rules = {"NET-001", "NET-004"}
+        # DNS exfiltration already proves a source-bearing value reaches a
+        # covert network sink. A reverse-shell string alone can still be a
+        # tutorial, detection signature, or blocked example, so NET-001 stays
+        # visible as SUSPICIOUS unless another same-file attack stage confirms it.
+        direct_attack_rules = {"NET-004"}
         if any(
             f.rule_id in direct_attack_rules and f.severity == Severity.CRITICAL
             for f in high_confidence

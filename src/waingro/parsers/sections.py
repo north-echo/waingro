@@ -6,6 +6,7 @@ import re
 from dataclasses import dataclass
 
 HEADING_RE = re.compile(r"^(#{1,6})\s+(.+)$")
+FENCE_RE = re.compile(r"^\s*(`{3,}|~{3,})")
 
 USAGE_HEADINGS = {
     "usage",
@@ -38,9 +39,15 @@ DETECTION_HEADINGS = {
     "what it catches",
     "defense protocol",
     "detection engines",
+    "security rules",
     "red flag",
     "obfuscated code",
     "credential theft",
+    "危险标志",
+    "安全检查",
+    "安全规则",
+    "检测模式",
+    "拦截规则",
 }
 
 DOCUMENTATION_HEADINGS = {
@@ -93,8 +100,23 @@ def parse_sections(body: str, start_line_offset: int = 0) -> list[MarkdownSectio
     lines = body.split("\n")
     sections: list[MarkdownSection] = []
     heading_stack: list[tuple[int, str, str]] = []  # (level, heading, category)
+    fence_character: str | None = None
+    fence_length = 0
 
     for i, line in enumerate(lines):
+        fence = FENCE_RE.match(line)
+        if fence:
+            marker = fence.group(1)
+            if fence_character is None:
+                fence_character = marker[0]
+                fence_length = len(marker)
+            elif marker[0] == fence_character and len(marker) >= fence_length:
+                fence_character = None
+                fence_length = 0
+            continue
+        if fence_character is not None:
+            continue
+
         m = HEADING_RE.match(line)
         if not m:
             continue

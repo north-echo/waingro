@@ -40,7 +40,7 @@ def test_scan_base64():
 
 def test_scan_reverse_shell():
     result = scan_skill(FIXTURES_DIR / "malicious" / "authtool-reverse-shell")
-    assert result.verdict == "MALICIOUS"
+    assert result.verdict == "SUSPICIOUS"
     rule_ids = {f.rule_id for f in result.findings}
     assert "NET-001" in rule_ids
 

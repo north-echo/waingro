@@ -75,6 +75,9 @@ waingro mcp batch manifest.json --results results.json --cleanup
   file directly. Missing manifests and unrelated files are rejected.
 - Bundled files are scanned with their paths preserved in JSON reports. Symlinks
   that resolve outside the skill or MCP server root are not followed.
+- Bundled Bash, Zsh, PowerShell, Python, JavaScript, TypeScript, JSON, TOML,
+  YAML, Markdown and text files are scanned no more than two directory levels
+  below the skill root. The root `SKILL.md` is never double-scanned.
 - MCP batch cloning accepts canonical HTTPS GitHub repository URLs only. Clone
   failures and scan timeouts are recorded per server so one bad entry does not
   abort the batch.
@@ -83,7 +86,7 @@ waingro mcp batch manifest.json --results results.json --cleanup
 
 ## Detection Coverage
 
-### OpenClaw Rules (34 rules)
+### OpenClaw Rules (45 rules)
 
 | Rule ID | Category | Severity | Description | Reference |
 |---------|----------|----------|-------------|-----------|
@@ -93,6 +96,10 @@ waingro mcp batch manifest.json --results results.json --cleanup
 | EXEC-004 | Execution | CRITICAL | PowerShell download cradles | — |
 | EXEC-005 | Execution | CRITICAL | Hex-decoded command execution | — |
 | EXEC-006 | Execution | CRITICAL | Hidden execution in bundled scripts | Polymarket trojan |
+| EXEC-007 | Supply chain | HIGH | Password-protected remote executable | ATT&CK T1027.013 |
+| EXEC-008 | Supply chain | HIGH | Mutable remote instructions executed | ATT&CK T1105 |
+| EXEC-009 | Execution | HIGH-CRIT | Remote download, write, chmod, and execute chain | ATT&CK T1105, T1204 |
+| EXEC-010 | Execution | HIGH | Audit, authentication, or shell-history log destruction | ATT&CK T1070.002, T1070.003 |
 | EXFIL-001 | Exfiltration | HIGH | Credential file access | Bitdefender |
 | EXFIL-002 | Exfiltration | CRITICAL | macOS Keychain access | — |
 | EXFIL-003 | Exfiltration | HIGH | Browser credential access | — |
@@ -100,10 +107,14 @@ waingro mcp batch manifest.json --results results.json --cleanup
 | EXFIL-005 | Exfiltration | HIGH | Environment variable harvesting | — |
 | EXFIL-006 | Exfiltration | HIGH | Embedded credential patterns | — |
 | EXFIL-007 | Exfiltration | HIGH | Clipboard monitoring | — |
+| EXFIL-008 | Exfiltration | HIGH | Sensitive local data transmitted to an external sink | ATT&CK T1041 |
+| EXFIL-009 | Exfiltration | MED-HIGH | Sensitive environment value transmitted externally | ATT&CK T1552.001, T1041 |
+| EXFIL-010 | Exfiltration | MED-HIGH | Bulk sensitive environment access | ATT&CK T1552.001 |
 | PERSIST-001 | Persistence | HIGH | Crontab modification | — |
 | PERSIST-002 | Persistence | HIGH | macOS LaunchAgent/LaunchDaemon | — |
 | PERSIST-003 | Persistence | HIGH | systemd unit creation | — |
 | PERSIST-004 | Persistence | MEDIUM | Shell profile modification | — |
+| PERSIST-005 | Persistence | HIGH | Root-owned or privileged world-writable path | CWE-732 |
 | NET-001 | Network | CRITICAL | Reverse shell patterns | AuthTool |
 | NET-002 | Network | CRITICAL | Known malicious infrastructure | Bitdefender |
 | NET-003 | Network | HIGH | Tunnel/proxy setup | — |
@@ -114,6 +125,7 @@ waingro mcp batch manifest.json --results results.json --cleanup
 | OBFUSC-001 | Obfuscation | CRITICAL | Base64 literal decoded into an execution sink | — |
 | OBFUSC-002 | Obfuscation | MEDIUM | String concatenation tricks | — |
 | OBFUSC-003 | Obfuscation | HIGH | Machine-obfuscated bundled code | — |
+| OBFUSC-004 | Obfuscation | HIGH | Invisible Unicode tag instruction payload | Unicode TR36 |
 | INJECT-001 | Injection | HIGH | Prompt injection patterns | — |
 | INJECT-002 | Injection | CRITICAL | Jailbreak/DAN patterns | — |
 | INJECT-003 | Injection | CRITICAL | Metadata injection | — |
@@ -121,6 +133,9 @@ waingro mcp batch manifest.json --results results.json --cleanup
 | SOCIAL-002 | Social Engineering | HIGH | Fake error messages | ClawHavoc |
 | SOCIAL-003 | Social Engineering | CRITICAL | Malicious npm lifecycle hooks | — |
 | TYPO-001 | Typosquatting | HIGH | Skill name typosquatting | — |
+| BEHAV-001 | Behavioral mismatch | HIGH | Undisclosed high-impact bundled behavior | ATT&CK T1204 |
+| BEHAV-002 | Behavioral mismatch | HIGH | Off-purpose high-impact agent instruction | OWASP ASI04 |
+| BEHAV-003 | Behavioral mismatch | HIGH | Off-purpose prerequisite data transfer | ATT&CK T1041 |
 
 ### MCP Rules (16 rules)
 
@@ -164,6 +179,16 @@ Findings are graded and aggregated rather than counted per matching line.
 - Machine-identity findings follow hostname or network-interface values through
   bounded exact-name assignments to a network send in the same lexical
   function. Local use of a hostname is not a finding.
+- Sensitive-file and environment findings require a bounded path from the
+  sensitive source to an outbound sink. Provider-matched credential handling
+  remains a warning; a provider mismatch or suspicious collection endpoint is
+  stronger review evidence.
+- Remote execution rules distinguish a documented installer from an opaque
+  archive, mutable web instructions, or a download-write-execute chain. The
+  remote bytes must be connected to execution; a URL beside a shell keyword is
+  not enough.
+- Hidden Unicode tag text is decoded for review. The hidden text is evasion
+  evidence, while its decoded behavior still determines the final assessment.
 - A remote `ws://` endpoint is reported as an exposed bidirectional transport,
   not labeled command-and-control. Intent still requires human review.
 - npm lifecycle findings come from parsed `preinstall`, `postinstall`, or
@@ -187,10 +212,32 @@ The decode-to-execution correlation is intentionally conservative lexical
 analysis, not an interprocedural taint engine. Complex aliases, returned values,
 callbacks, and cross-function flows may require semantic or manual review.
 
-Scanner verdicts are triage labels, not ground truth. In particular, a
-`MALICIOUS` verdict means a high-confidence critical rule fired; it does not by
-itself establish that a publisher acted maliciously. Confirm intent and the
-complete behavior chain before making that claim.
+Scanner verdicts are triage labels, not ground truth. Severity describes impact;
+it does not prove intent. `MALICIOUS` is reserved for a direct DNS-exfiltration
+chain, or corroborating same-file evidence such as encoded execution or known
+command-and-control infrastructure plus execution. Other
+high-impact behavior is `SUSPICIOUS`; probable security tools and passive test,
+fixture, benchmark, or evaluation resources are routed to `REVIEW`. Confirm the
+complete behavior chain and publisher context before making an attribution.
+
+## Benchmarking
+
+WAINGRO includes a non-executing benchmark command for datasets laid out as
+`DATASET/{benign,malicious}/CASE/SKILL.md`:
+
+```bash
+waingro benchmark ./dataset --threshold suspicious
+waingro benchmark ./dataset --format json --output benchmark.json \
+  --fail-under-precision 0.95 --fail-under-recall 0.90
+```
+
+On the 100-case [Runtime Skill Audit](https://github.com/tu-tuing/Runtime-Skill-Audit)
+dataset at revision `559986985e38f3d8743a217b69e37cb258c9b566`, WAINGRO's
+`SUSPICIOUS+` boundary produced 47 true positives, 0 false positives, 50 true
+negatives, and 3 false negatives: 100% precision, 94% recall, and 96.9% F1.
+The three misses are narrative-only disclosures with no active instruction or
+executable dataflow. This is one external dataset, not a claim of universal
+performance; keep adding real malicious samples and adversarial benign controls.
 
 ## Threat-intelligence model
 
@@ -223,6 +270,9 @@ not promoted to an attack verdict.
 - [ClawHub Ecosystem Security Audit](research/clawhub-audit/) — March 2026 audit of 30,037 skills
 - MCP Ecosystem Security Scan — March 2026 scan of 1,139 MCP servers (paper forthcoming)
 
+Research and maintenance: Christopher Lusk, North Echo Security Research,
+clusk@northecho.dev.
+
 ## References
 
 - [OWASP MCP Top 10](https://owasp.org/www-project-mcp-top-10/)
@@ -231,6 +281,10 @@ not promoted to an attack verdict.
 - [Bitdefender Technical Advisory: OpenClaw Exploitation](https://businessinsights.bitdefender.com/technical-advisory-openclaw-exploitation-enterprise-networks)
 - [CWE-319: Cleartext Transmission of Sensitive Information](https://cwe.mitre.org/data/definitions/319.html)
 - [MITRE ATT&CK: System Information Discovery (T1082)](https://attack.mitre.org/techniques/T1082/)
+- [OWASP Agentic Skills Top 10](https://owasp.github.io/www-project-agentic-skills-top-10/)
+- [Runtime Skill Audit benchmark](https://github.com/tu-tuing/Runtime-Skill-Audit)
+- [SkillFortifyBench](https://github.com/qualixar/skillfortifybench)
+- [Snyk ToxicSkills](https://github.com/snyk-labs/toxicskills-goof)
 
 ## License
 

@@ -160,6 +160,8 @@ python-telegram-bot
 pyppeteer
 undetected-chromedriver
 pypdf
+pypdf2
+ezdxf
 reportlab
 openpyxl
 xlsxwriter

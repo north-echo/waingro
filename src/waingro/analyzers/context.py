@@ -24,6 +24,15 @@ SECURITY_KEYWORDS = [
     "detection",
     "defense",
     "safety",
+    "vulnerability",
+    "threat",
+    "vetter",
+    "安全",
+    "检测",
+    "审查",
+    "拦截",
+    "防护",
+    "风险",
 ]
 
 DEFENSIVE_HEADINGS = [
@@ -57,7 +66,32 @@ DETECTION_MARKERS = [
     "benign:",
     "malicious:",
     "contains_threat_signatures",
+    "security rules",
+    "危险命令",
+    "安全检查",
+    "危险标志",
+    "拦截",
 ]
+
+_DETECTION_LITERAL_RE = re.compile(
+    r"^\s*(?:[rubf]{0,2})?[\"']?"
+    r"(?:pattern|example|signature|indicator|blocked_pattern|deny_pattern)"
+    r"[\"']?\s*:\s*(?:[rubf]{0,2})?[\"']",
+    re.IGNORECASE,
+)
+
+
+def _bundled_source_line(skill: ParsedSkill, finding: Finding) -> str | None:
+    """Return the exact bundled source line for a finding, when available."""
+    if not finding.line_number or finding.file_path.name.lower() == "skill.md":
+        return None
+    for bundled in skill.bundled_content:
+        if bundled.path != finding.file_path:
+            continue
+        lines = bundled.content.splitlines()
+        index = finding.line_number - 1
+        return lines[index] if 0 <= index < len(lines) else None
+    return None
 
 
 def compute_security_tool_score(
@@ -142,6 +176,10 @@ def adjust_finding_confidence(
         relative_parts = {part.lower() for part in relative_path.parts}
         passive_parts = fixture_parts | {"benchmark", "benchmarks", "eval", "evals"}
         passive_names = {
+            "test",
+            "tests",
+            "spec",
+            "specs",
             "benchmark",
             "benchmarks",
             "eval",
@@ -149,9 +187,10 @@ def adjust_finding_confidence(
             "fixture",
             "fixtures",
         }
+        stem_tokens = set(re.split(r"[^a-z0-9]+", relative_path.stem.lower()))
         is_passive_resource = is_skill_relative and (
             bool(relative_parts & passive_parts)
-            or relative_path.stem.lower() in passive_names
+            or bool(stem_tokens & passive_names)
         )
         is_defensive_fixture = (
             skill is not None
@@ -159,8 +198,15 @@ def adjust_finding_confidence(
             and bool(relative_parts & fixture_parts)
         )
         is_detection_section = bool(section and section.category == "detection")
+        source_line = _bundled_source_line(skill, finding) if skill else None
+        is_detection_literal = bool(source_line and _DETECTION_LITERAL_RE.match(source_line))
 
-        if is_passive_resource or is_defensive_fixture or is_detection_section:
+        if (
+            is_passive_resource
+            or is_defensive_fixture
+            or is_detection_section
+            or is_detection_literal
+        ):
             finding.confidence = min(finding.confidence, 0.1)
             reason = (
                 "security-tool test/fixture path"
@@ -168,7 +214,11 @@ def adjust_finding_confidence(
                 else (
                     "passive benchmark/eval/test resource"
                     if is_passive_resource
-                    else "detection section"
+                    else (
+                        "detection-rule literal"
+                        if is_detection_literal
+                        else "detection section"
+                    )
                 )
             )
             finding.context_note = (

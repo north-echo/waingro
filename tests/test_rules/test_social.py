@@ -32,6 +32,13 @@ def test_social_001_ignores_flags_and_file_refs(make_inline_skill):
     assert len(findings) == 0
 
 
+def test_social_001_ignores_established_packages_near_known_names(make_inline_skill):
+    """A real legacy package is not a typosquat merely because its name is close."""
+    skill = make_inline_skill(body="pip install PyPDF2\npip install ezdxf")
+    findings = FakeDependency().evaluate(skill)
+    assert findings == []
+
+
 def test_social_001_catches_unknown_package(make_inline_skill):
     """SOCIAL-001 still catches genuinely unknown packages."""
     skill = make_inline_skill(body="pip install evil-backdoor-pkg")
