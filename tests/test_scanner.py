@@ -2,7 +2,7 @@
 
 from pathlib import Path
 
-from waingro.scanner import audit_skills, scan_skill
+from waingro.scanner import DEFAULT_KNOWN_GOOD, audit_skills, load_skill, scan_skill
 
 FIXTURES_DIR = Path(__file__).parent / "fixtures"
 
@@ -12,6 +12,16 @@ def test_scan_clean_skill():
     assert result.verdict == "CLEAN"
     assert result.files_scanned >= 1
     assert result.rules_evaluated > 0
+
+
+def test_packaged_known_skill_baseline_exists():
+    assert DEFAULT_KNOWN_GOOD.is_file()
+    assert "weather-check" in DEFAULT_KNOWN_GOOD.read_text(encoding="utf-8")
+
+
+def test_load_skill_includes_bundled_content():
+    skill = load_skill(CORPUS_DIR / "benign" / "bundled-subprocess")
+    assert any(file.path.name == "lint.py" for file in skill.bundled_content)
 
 
 def test_scan_curl_pipe():

@@ -1,9 +1,11 @@
 """Social engineering rules: detect fake dependencies and misleading error messages."""
 
+import json
 import logging
 import re
 from pathlib import Path
 
+from waingro.analyzers.dataflow import LIFECYCLE_EXEC_OR_FETCH_RE
 from waingro.analyzers.typosquat import _levenshtein
 from waingro.models import Finding, FindingCategory, ParsedSkill, Severity
 from waingro.rules import Rule, register_rule, search_skill_content
@@ -13,12 +15,40 @@ logger = logging.getLogger(__name__)
 _PACKAGES_PATH = Path(__file__).parent.parent / "data" / "known_packages.txt"
 
 _FALLBACK_PACKAGES = {
-    "click", "rich", "pyyaml", "requests", "flask", "django", "fastapi",
-    "numpy", "pandas", "scipy", "matplotlib", "pytest", "setuptools",
-    "pip", "wheel", "node", "npm", "yarn", "typescript", "react",
-    "express", "lodash", "axios", "webpack", "vite", "next",
-    "colorama", "jq", "shellcheck", "pylint", "black", "mypy",
-    "jest", "eslint",
+    "click",
+    "rich",
+    "pyyaml",
+    "requests",
+    "flask",
+    "django",
+    "fastapi",
+    "numpy",
+    "pandas",
+    "scipy",
+    "matplotlib",
+    "pytest",
+    "setuptools",
+    "pip",
+    "wheel",
+    "node",
+    "npm",
+    "yarn",
+    "typescript",
+    "react",
+    "express",
+    "lodash",
+    "axios",
+    "webpack",
+    "vite",
+    "next",
+    "colorama",
+    "jq",
+    "shellcheck",
+    "pylint",
+    "black",
+    "mypy",
+    "jest",
+    "eslint",
 }
 
 
@@ -74,6 +104,7 @@ def _nearest_known(pkg: str, threshold: int = 2) -> str | None:
             best, best_dist = good, dist
     return best
 
+
 @register_rule
 class FakeDependency(Rule):
     rule_id = "SOCIAL-001"
@@ -111,7 +142,13 @@ class FakeDependency(Rule):
                     pkg = m.group(1).lower().rstrip("/")
                     # Skip file references (pip install -r requirements.txt)
                     if "." in pkg and pkg.rsplit(".", 1)[-1] in (
-                        "txt", "cfg", "toml", "in", "lock", "yml", "yaml",
+                        "txt",
+                        "cfg",
+                        "toml",
+                        "in",
+                        "lock",
+                        "yml",
+                        "yaml",
                     ):
                         continue
                     if pkg not in KNOWN_GOOD_PACKAGES:
@@ -132,10 +169,7 @@ class FakeDependency(Rule):
                                 "but is not a recognized package. Verify that it "
                                 "exists and is published by the platform."
                             )
-                            note = (
-                                "Unrecognised package whose name claims platform "
-                                "affiliation."
-                            )
+                            note = "Unrecognised package whose name claims platform affiliation."
                         elif near:
                             severity, confidence = Severity.HIGH, 0.85
                             remediation = (
@@ -153,20 +187,22 @@ class FakeDependency(Rule):
                                 "Unrecognised package name with no close match to a "
                                 "known package. Informational only."
                             )
-                        findings.append(Finding(
-                            rule_id=self.rule_id,
-                            title=self.title,
-                            description=self.description,
-                            severity=severity,
-                            category=FindingCategory.SOCIAL_ENGINEERING,
-                            file_path=fpath,
-                            line_number=line_num,
-                            matched_content=m.group(0)[:200],
-                            remediation=remediation,
-                            reference="1Password analysis (Feb 2026)",
-                            confidence=confidence,
-                            context_note=note,
-                        ))
+                        findings.append(
+                            Finding(
+                                rule_id=self.rule_id,
+                                title=self.title,
+                                description=self.description,
+                                severity=severity,
+                                category=FindingCategory.SOCIAL_ENGINEERING,
+                                file_path=fpath,
+                                line_number=line_num,
+                                matched_content=m.group(0)[:200],
+                                remediation=remediation,
+                                reference="1Password analysis (Feb 2026)",
+                                confidence=confidence,
+                                context_note=note,
+                            )
+                        )
         return findings
 
 
@@ -186,21 +222,22 @@ class FakeErrorMessage(Rule):
     def evaluate(self, skill: ParsedSkill) -> list[Finding]:
         findings = []
         for matched, line, fpath in search_skill_content(skill, self._patterns):
-            findings.append(Finding(
-                rule_id=self.rule_id,
-                title=self.title,
-                description=self.description,
-                severity=Severity.HIGH,
-                category=FindingCategory.SOCIAL_ENGINEERING,
-                file_path=fpath,
-                line_number=line,
-                matched_content=matched[:200],
-                remediation=(
-                    "Be suspicious of skills that instruct you to run "
-                    "commands to fix errors."
-                ),
-                reference="ClawHavoc -- social engineering via fake error messages",
-            ))
+            findings.append(
+                Finding(
+                    rule_id=self.rule_id,
+                    title=self.title,
+                    description=self.description,
+                    severity=Severity.HIGH,
+                    category=FindingCategory.SOCIAL_ENGINEERING,
+                    file_path=fpath,
+                    line_number=line,
+                    matched_content=matched[:200],
+                    remediation=(
+                        "Be suspicious of skills that instruct you to run commands to fix errors."
+                    ),
+                    reference="ClawHavoc -- social engineering via fake error messages",
+                )
+            )
         return findings
 
 
@@ -210,29 +247,41 @@ class NpmLifecycleHook(Rule):
     title = "Malicious npm lifecycle hook"
     description = "Detects npm preinstall/postinstall hooks that execute shell commands"
 
-    _patterns = [
-        re.compile(r'"preinstall"\s*:\s*".*(?:curl|wget|bash|sh|node\s+-e)', re.IGNORECASE),
-        re.compile(r'"postinstall"\s*:\s*".*(?:curl|wget|bash|sh|node\s+-e)', re.IGNORECASE),
-        re.compile(r'"prepare"\s*:\s*".*(?:curl|wget|bash|sh|node\s+-e)', re.IGNORECASE),
-        re.compile(r"child_process.*exec", re.IGNORECASE),
-    ]
+    _hooks = ("preinstall", "postinstall", "prepare")
 
     def evaluate(self, skill: ParsedSkill) -> list[Finding]:
         findings = []
-        for matched, line, fpath in search_skill_content(skill, self._patterns):
-            findings.append(Finding(
-                rule_id=self.rule_id,
-                title=self.title,
-                description=self.description,
-                severity=Severity.CRITICAL,
-                category=FindingCategory.SOCIAL_ENGINEERING,
-                file_path=fpath,
-                line_number=line,
-                matched_content=matched[:200],
-                remediation=(
-                    "npm lifecycle hooks (preinstall/postinstall) should not "
-                    "execute remote scripts or spawn shell processes."
-                ),
-                reference=None,
-            ))
+        for bundled in skill.bundled_content:
+            if bundled.path.name.lower() != "package.json":
+                continue
+            try:
+                package = json.loads(bundled.content)
+            except (json.JSONDecodeError, TypeError):
+                continue
+            scripts = package.get("scripts") if isinstance(package, dict) else None
+            if not isinstance(scripts, dict):
+                continue
+            for hook in self._hooks:
+                command = scripts.get(hook)
+                if not isinstance(command, str) or not LIFECYCLE_EXEC_OR_FETCH_RE.search(command):
+                    continue
+                key_match = re.search(rf'"{hook}"\s*:', bundled.content)
+                line = bundled.content.count("\n", 0, key_match.start()) + 1 if key_match else None
+                findings.append(
+                    Finding(
+                        rule_id=self.rule_id,
+                        title=self.title,
+                        description=self.description,
+                        severity=Severity.CRITICAL,
+                        category=FindingCategory.SOCIAL_ENGINEERING,
+                        file_path=bundled.path,
+                        line_number=line,
+                        matched_content=f'"{hook}": {command}'[:200],
+                        remediation=(
+                            "npm lifecycle hooks (preinstall/postinstall/prepare) should not "
+                            "fetch remote content or spawn shell processes."
+                        ),
+                        reference=None,
+                    )
+                )
         return findings

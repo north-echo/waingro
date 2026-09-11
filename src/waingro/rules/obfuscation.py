@@ -5,6 +5,10 @@ import binascii
 import math
 import re
 
+from waingro.analyzers.dataflow import (
+    LOCKFILE_NAMES,
+    literal_reaches_decode_and_execution,
+)
 from waingro.models import Finding, FindingCategory, ParsedSkill, Severity
 from waingro.rules import (
     Rule,
@@ -12,13 +16,6 @@ from waingro.rules import (
     search_skill_content,
     search_skill_content_lines,
 )
-
-# Patterns that look like base64 but are actually common non-malicious content
-_GENERATED_FILE_NAMES = {
-    "package-lock.json", "yarn.lock", "pnpm-lock.yaml", "pnpm-lock.json",
-    "composer.lock", "Gemfile.lock", "Cargo.lock", "poetry.lock",
-    "Pipfile.lock", "bun.lockb",
-}
 
 # Patterns that look like base64 but are actually common non-malicious content
 _BASE64_EXCLUSIONS = [
@@ -37,26 +34,17 @@ def _is_excluded_base64(matched: str) -> bool:
     return any(pat.search(matched) for pat in _BASE64_EXCLUSIONS)
 
 
-# Decode-and-execute sinks. A base64 blob is only interesting when something
-# actually decodes it; a blob sitting alone in a document is an asset, not an
-# attack. Keyed off the source line so the blob and its sink are correlated.
-_DECODE_SINKS = re.compile(
-    r"""(?:
-        base64\s+(?:-d|-D|--decode)          # shell: base64 -d
-      | openssl\s+enc\s+.*-d                # shell: openssl enc -d
-      | \batob\s*\(                         # JS: atob()
-      | Buffer\.from\s*\([^)]*base64       # JS: Buffer.from(x, 'base64')
-      | b64decode|b64_decode                 # Python: base64.b64decode
-      | FromBase64String                     # PowerShell
-      | \bdecode\s*\(\s*['"]base64        # generic decode('base64')
-    )""",
-    re.IGNORECASE | re.VERBOSE,
-)
-
-# Executed immediately after decoding — the pattern that actually matters.
-_EXEC_SINKS = re.compile(
-    r"\b(?:bash|sh|zsh|eval|exec|iex|invoke-expression|system|popen|subprocess)\b",
-    re.IGNORECASE,
+_DECODE_PATTERNS = tuple(
+    re.compile(pattern, re.IGNORECASE | re.VERBOSE)
+    for pattern in (
+        r"base64\s+(?:-d|-D|--decode)",
+        r"openssl\s+enc\s+.*-d",
+        r"\batob\s*\(",
+        r"Buffer\.from\s*\([^)]*base64",
+        r"b64decode|b64_decode",
+        r"FromBase64String",
+        r"\bdecode\s*\(\s*['\"]base64",
+    )
 )
 
 # Magic bytes for embedded assets. These are files, not payloads.
@@ -114,24 +102,17 @@ class Base64Strings(Rule):
     # be long before it is worth mentioning, which is what keeps the volume
     # down on ordinary documents.
     SINK_MIN_CHARS = 24
-    BARE_MIN_CHARS = 80
 
-    _patterns = [
-        re.compile(r"[A-Za-z0-9+/]{%d,}={0,2}" % SINK_MIN_CHARS),
-    ]
+    _patterns = [re.compile(rf"[A-Za-z0-9+/]{{{SINK_MIN_CHARS},}}={{0,2}}")]
 
     def evaluate(self, skill: ParsedSkill) -> list[Finding]:
         findings = []
-        for matched, line, fpath, source_line in search_skill_content_lines(
+        for matched, line, fpath, _source_line in search_skill_content_lines(
             skill, self._patterns,
         ):
             if _is_excluded_base64(matched):
                 continue
-            if fpath.name in _GENERATED_FILE_NAMES:
-                continue
-
-            has_decode_sink = bool(_DECODE_SINKS.search(source_line))
-            if not has_decode_sink and len(matched) < self.BARE_MIN_CHARS:
+            if fpath.name.lower() in LOCKFILE_NAMES:
                 continue
 
             decoded = _decode_base64(matched)
@@ -148,38 +129,28 @@ class Base64Strings(Rule):
                 # Decodes, but to nothing a human or shell would act on.
                 continue
 
-            has_exec_sink = bool(_EXEC_SINKS.search(source_line))
             preview = decoded[:120].decode("utf-8", errors="replace")
-
-            if has_decode_sink and has_exec_sink:
-                severity = Severity.CRITICAL
-                confidence = 1.0
-                note = f"Decoded and executed on the same line. Decodes to: {preview!r}"
-            elif has_decode_sink:
-                severity = Severity.HIGH
-                confidence = 0.8
-                note = f"Decoded on the same line. Decodes to: {preview!r}"
-            else:
-                severity = Severity.LOW
-                confidence = 0.3
-                note = (
-                    "Encoded blob with no decode sink on the same line. "
-                    f"Decodes to: {preview!r}"
-                )
+            if not literal_reaches_decode_and_execution(
+                skill, fpath, line, _DECODE_PATTERNS,
+            ):
+                continue
 
             findings.append(Finding(
                 rule_id=self.rule_id,
                 title=self.title,
                 description=self.description,
-                severity=severity,
+                severity=Severity.CRITICAL,
                 category=FindingCategory.OBFUSCATION,
                 file_path=fpath,
                 line_number=line,
                 matched_content=matched[:80] + "..." if len(matched) > 80 else matched,
                 remediation="Decode and inspect base64 strings before trusting skill content.",
                 reference=None,
-                confidence=confidence,
-                context_note=note,
+                confidence=1.0,
+                context_note=(
+                    "Encoded value is decoded and reaches an execution sink in the same "
+                    f"lexical scope. Decodes to: {preview!r}"
+                ),
             ))
         return findings
 
@@ -274,4 +245,3 @@ class MachineObfuscatedBundle(Rule):
                 ),
             ))
         return findings
-

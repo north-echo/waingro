@@ -3,7 +3,6 @@
 from waingro.mcp.models import Finding, FindingCategory, ParsedMCPServer, Severity
 from waingro.rules.mcp import MCPRule, register_rule
 
-
 # Top MCP server packages by popularity — targets for typosquatting
 KNOWN_POPULAR = [
     # Official / reference
@@ -99,24 +98,26 @@ class TyposquatDetection(MCPRule):
             max_dist = 2 if len(norm_popular) < 15 else 3
 
             if 0 < distance <= max_dist:
-                findings.append(Finding(
-                    rule_id=self.rule_id,
-                    title=f"Possible typosquat of '{popular}'",
-                    description=(
-                        f"Package '{pkg_name}' is {distance} edit(s) from "
-                        f"popular package '{popular}'"
-                    ),
-                    severity=Severity.HIGH,
-                    category=FindingCategory.SUPPLY_CHAIN,
-                    file_path=server.path / "package.json",
-                    line_number=None,
-                    matched_content=f"{pkg_name} ≈ {popular} (distance={distance})",
-                    remediation=(
-                        "Verify this package is not impersonating a popular MCP server. "
-                        "Check author, repository URL, and publish date."
-                    ),
-                    reference="npm typosquatting attacks; Adversa #14 (Rug Pull)",
-                    confidence=0.7 if distance == 1 else 0.5,
-                ))
+                findings.append(
+                    Finding(
+                        rule_id=self.rule_id,
+                        title=f"Possible typosquat of '{popular}'",
+                        description=(
+                            f"Package '{pkg_name}' is {distance} edit(s) from "
+                            f"popular package '{popular}'"
+                        ),
+                        severity=Severity.HIGH,
+                        category=FindingCategory.SUPPLY_CHAIN,
+                        file_path=server.path / "package.json",
+                        line_number=None,
+                        matched_content=f"{pkg_name} ≈ {popular} (distance={distance})",
+                        remediation=(
+                            "Verify this package is not impersonating a popular MCP server. "
+                            "Check author, repository URL, and publish date."
+                        ),
+                        reference="npm typosquatting attacks; Adversa #14 (Rug Pull)",
+                        confidence=0.7 if distance == 1 else 0.5,
+                    )
+                )
 
         return findings

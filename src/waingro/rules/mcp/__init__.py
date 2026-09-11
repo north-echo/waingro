@@ -120,7 +120,7 @@ def _search_param_dict(
     hits: list,
 ) -> None:
     """Recursively search parameter schema dicts for pattern matches."""
-    for key, value in d.items():
+    for _key, value in d.items():
         if isinstance(value, str):
             for pat in patterns:
                 m = pat.search(value)

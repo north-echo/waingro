@@ -125,8 +125,8 @@ def test_exec_002_high_confidence_with_subprocess(make_inline_skill):
     assert findings[0].confidence >= 0.8
 
 
-def test_exec_002_low_confidence_without_exec_context(make_inline_skill):
-    """EXEC-002 lowers confidence when no execution indicators are nearby."""
+def test_exec_002_ignores_decode_without_exec_flow(make_inline_skill):
+    """EXEC-002 does not turn ordinary data decoding into command execution."""
     skill = make_inline_skill(
         body="",
         bundled={
@@ -140,8 +140,7 @@ def test_exec_002_low_confidence_without_exec_context(make_inline_skill):
         },
     )
     findings = Base64Execution().evaluate(skill)
-    assert len(findings) >= 1
-    assert findings[0].confidence < 0.5
+    assert findings == []
 
 
 def test_exec_002_pipe_to_shell_always_critical(make_inline_skill):

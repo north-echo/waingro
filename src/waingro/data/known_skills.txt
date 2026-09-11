@@ -1,0 +1,16 @@
+weather-check
+github-assistant
+slack-bot
+jira-helper
+confluence-search
+linear-tracker
+notion-sync
+calendar-manager
+email-assistant
+code-reviewer
+docker-helper
+kubernetes-manager
+terraform-helper
+aws-assistant
+gcp-helper
+azure-tools

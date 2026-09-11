@@ -6,10 +6,11 @@ from pathlib import Path
 import click
 
 from waingro import __version__
+from waingro.analyzers.risk_profile import compute_risk_profile
 from waingro.models import Severity
 from waingro.reporters.console import print_audit_results, print_result
 from waingro.reporters.json_report import format_audit_json, format_json
-from waingro.scanner import audit_skills, scan_skill
+from waingro.scanner import audit_skills, load_skill, scan_skill
 
 SEVERITY_MAP = {
     "critical": Severity.CRITICAL,
@@ -36,8 +37,11 @@ def main() -> None:
 @click.argument("path", type=click.Path(exists=True, path_type=Path))
 @click.option("-f", "--format", "fmt", type=click.Choice(["console", "json"]), default="console")
 @click.option(
-    "-s", "--severity", "min_severity",
-    type=click.Choice(list(SEVERITY_MAP.keys())), default="low",
+    "-s",
+    "--severity",
+    "min_severity",
+    type=click.Choice(list(SEVERITY_MAP.keys())),
+    default="low",
 )
 @click.option("--fail-on", type=click.Choice(["critical", "high", "medium", "low"]), default=None)
 @click.option("--no-color", is_flag=True, default=False)
@@ -59,32 +63,49 @@ def scan(
     semantic_budget: float,
 ) -> None:
     """Scan an OpenClaw skill directory or SKILL.md file for security issues."""
-    result = scan_skill(path)
+    try:
+        result = scan_skill(path)
+    except (OSError, ValueError) as exc:
+        raise click.ClickException(str(exc)) from exc
 
     if semantic and result.findings:
         from waingro.analyzers.semantic import SemanticAnalyzer
+
         analyzer = SemanticAnalyzer(budget=semantic_budget)
         if analyzer.should_analyze(result.verdict, result.security_tool_score):
-            from waingro.parsers.skill import parse_skill as _parse
-            skill = _parse(path)
+            skill = load_skill(path)
             api_result = analyzer.analyze(skill, result.findings)
             result.findings = analyzer.apply_results(result.findings, api_result)
+            result.risk_profile = compute_risk_profile(
+                result.findings,
+                result.security_tool_score,
+            ).to_dict()
 
-    # Filter by minimum severity
     min_sev = SEVERITY_MAP[min_severity]
-    result.findings = [f for f in result.findings if _severity_at_or_above(f.severity, min_sev)]
 
     if fmt == "json":
-        text = format_json(result)
+        text = format_json(result, min_sev)
         if output:
-            output.write_text(text)
+            output.write_text(text, encoding="utf-8")
         else:
             click.echo(text)
     else:
         if output:
-            print_result(result, quiet=quiet, no_color=True)
+            with output.open("w", encoding="utf-8") as handle:
+                print_result(
+                    result,
+                    quiet=quiet,
+                    no_color=True,
+                    file=handle,
+                    min_severity=min_sev,
+                )
         else:
-            print_result(result, quiet=quiet, no_color=no_color)
+            print_result(
+                result,
+                quiet=quiet,
+                no_color=no_color,
+                min_severity=min_sev,
+            )
 
     # Exit code
     if fail_on:
@@ -94,7 +115,10 @@ def scan(
 
 
 @main.command()
-@click.argument("skills_dir", type=click.Path(exists=True, path_type=Path))
+@click.argument(
+    "skills_dir",
+    type=click.Path(exists=True, file_okay=False, path_type=Path),
+)
 @click.option("-f", "--format", "fmt", type=click.Choice(["console", "json"]), default="console")
 @click.option("--fail-on", type=click.Choice(["critical", "high", "medium", "low"]), default=None)
 @click.option("-o", "--output", type=click.Path(path_type=Path), default=None)
@@ -114,11 +138,15 @@ def audit(
     if fmt == "json":
         text = format_audit_json(results)
         if output:
-            output.write_text(text)
+            output.write_text(text, encoding="utf-8")
         else:
             click.echo(text)
     else:
-        print_audit_results(results, quiet=quiet, no_color=no_color)
+        if output:
+            with output.open("w", encoding="utf-8") as handle:
+                print_audit_results(results, quiet=quiet, no_color=True, file=handle)
+        else:
+            print_audit_results(results, quiet=quiet, no_color=no_color)
 
     if fail_on:
         fail_sev = SEVERITY_MAP[fail_on]
@@ -142,24 +170,31 @@ def mcp() -> None:
 
 
 @mcp.command("scan")
-@click.argument("path", type=click.Path(exists=True, path_type=Path))
+@click.argument("path", type=click.Path(exists=True, file_okay=False, path_type=Path))
 @click.option("-f", "--format", "fmt", type=click.Choice(["console", "json"]), default="console")
 @click.option(
-    "-s", "--severity", "min_severity",
-    type=click.Choice(list(SEVERITY_MAP.keys())), default="low",
+    "-s",
+    "--severity",
+    "min_severity",
+    type=click.Choice(list(SEVERITY_MAP.keys())),
+    default="low",
 )
 @click.option("--fail-on", type=click.Choice(["critical", "high", "medium", "low"]), default=None)
 def mcp_scan(path: Path, fmt: str, min_severity: str, fail_on: str | None) -> None:
     """Scan an MCP server directory for security issues."""
     from waingro.mcp.scanner import scan_server as mcp_scan_server
 
-    result = mcp_scan_server(path)
+    try:
+        result = mcp_scan_server(path)
+    except (OSError, ValueError) as exc:
+        raise click.ClickException(str(exc)) from exc
 
     min_sev = SEVERITY_MAP[min_severity]
-    result.findings = [f for f in result.findings if _severity_at_or_above(f.severity, min_sev)]
+    visible_findings = [f for f in result.findings if _severity_at_or_above(f.severity, min_sev)]
 
     if fmt == "json":
         import json as _json
+
         output = {
             "server": str(result.server_path),
             "name": result.metadata.name,
@@ -178,22 +213,27 @@ def mcp_scan(path: Path, fmt: str, min_severity: str, fail_on: str | None) -> No
                     "matched": f.matched_content,
                     "confidence": f.confidence,
                 }
-                for f in result.findings
+                for f in visible_findings
             ],
         }
         click.echo(_json.dumps(output, indent=2))
     else:
-        color = {"MALICIOUS": "red", "SUSPICIOUS": "yellow", "WARNING": "yellow",
-                 "REVIEW": "blue", "CLEAN": "green"}.get(result.verdict, "white")
-        click.echo(f"\n{'='*60}")
+        color = {
+            "MALICIOUS": "red",
+            "SUSPICIOUS": "yellow",
+            "WARNING": "yellow",
+            "REVIEW": "blue",
+            "CLEAN": "green",
+        }.get(result.verdict, "white")
+        click.echo(f"\n{'=' * 60}")
         click.echo(f"{result.metadata.name} ({result.metadata.version or 'unknown'})")
         click.echo(f"  Verdict: {click.style(result.verdict, fg=color)}")
         click.echo(f"  Files:   {result.files_scanned}")
         click.echo(f"  Tools:   {len(result.metadata.tools)}")
-        if result.findings:
-            click.echo(f"  Findings ({len(result.findings)}):")
+        if visible_findings:
+            click.echo(f"  Findings ({len(visible_findings)}):")
             sev_order = ["critical", "high", "medium", "low", "info"]
-            for f in sorted(result.findings, key=lambda x: sev_order.index(x.severity.value)):
+            for f in sorted(visible_findings, key=lambda x: sev_order.index(x.severity.value)):
                 conf = f" (conf={f.confidence:.1f})" if f.confidence < 1.0 else ""
                 click.echo(f"    [{f.severity.value.upper():8s}] {f.rule_id}: {f.title}{conf}")
                 click.echo(f"             {f.matched_content[:80]}")
@@ -213,8 +253,12 @@ def mcp_scan(path: Path, fmt: str, min_severity: str, fail_on: str | None) -> No
 @click.option("--min-stars", type=int, default=0)
 @click.option("--cleanup", is_flag=True, help="Delete repos after scanning")
 def mcp_batch(
-    manifest: Path, clone_dir: Path, results: Path,
-    max_servers: int, min_stars: int, cleanup: bool,
+    manifest: Path,
+    clone_dir: Path,
+    results: Path,
+    max_servers: int,
+    min_stars: int,
+    cleanup: bool,
 ) -> None:
     """Batch clone + scan MCP servers from a discovery manifest."""
     from waingro.mcp.batch import BatchConfig, run_batch_scan
@@ -236,10 +280,19 @@ def mcp_batch(
 
 
 @mcp.command("discover")
-@click.option("--awesome", type=click.Path(exists=True, path_type=Path), help="awesome-mcp-servers README.md")
+@click.option(
+    "--awesome",
+    type=click.Path(exists=True, path_type=Path),
+    help="awesome-mcp-servers README.md",
+)
 @click.option("--no-npm", is_flag=True)
 @click.option("--no-github", is_flag=True)
-@click.option("-o", "--output", type=click.Path(path_type=Path), default=Path("discovery-manifest.json"))
+@click.option(
+    "-o",
+    "--output",
+    type=click.Path(path_type=Path),
+    default=Path("discovery-manifest.json"),
+)
 def mcp_discover(awesome: Path | None, no_npm: bool, no_github: bool, output: Path) -> None:
     """Discover MCP servers from npm, GitHub, and awesome lists."""
     from waingro.mcp.discovery import run_discovery

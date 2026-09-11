@@ -31,18 +31,20 @@ class PromptInjection(Rule):
     def evaluate(self, skill: ParsedSkill) -> list[Finding]:
         findings = []
         for matched, line, fpath in search_skill_content(skill, self._patterns):
-            findings.append(Finding(
-                rule_id=self.rule_id,
-                title=self.title,
-                description=self.description,
-                severity=Severity.HIGH,
-                category=FindingCategory.INJECTION,
-                file_path=fpath,
-                line_number=line,
-                matched_content=matched[:200],
-                remediation="Skills should not contain instruction override patterns.",
-                reference=None,
-            ))
+            findings.append(
+                Finding(
+                    rule_id=self.rule_id,
+                    title=self.title,
+                    description=self.description,
+                    severity=Severity.HIGH,
+                    category=FindingCategory.INJECTION,
+                    file_path=fpath,
+                    line_number=line,
+                    matched_content=matched[:200],
+                    remediation="Skills should not contain instruction override patterns.",
+                    reference=None,
+                )
+            )
         return findings
 
 
@@ -61,27 +63,28 @@ class JailbreakPattern(Rule):
         re.compile(r"\[DAN\]", re.IGNORECASE),
         re.compile(r"\[NORMAL\]\s*and\s*\[DAN\]", re.IGNORECASE),
         re.compile(r"without\s+(any\s+)?safety\s+checks", re.IGNORECASE),
-        re.compile(r"compliance\s+is\s+mandatory", re.IGNORECASE),
     ]
 
     def evaluate(self, skill: ParsedSkill) -> list[Finding]:
         findings = []
         for matched, line, fpath in search_skill_content(skill, self._patterns):
-            findings.append(Finding(
-                rule_id=self.rule_id,
-                title=self.title,
-                description=self.description,
-                severity=Severity.CRITICAL,
-                category=FindingCategory.INJECTION,
-                file_path=fpath,
-                line_number=line,
-                matched_content=matched[:200],
-                remediation=(
-                    "Skills must not contain jailbreak patterns or "
-                    "attempt to override AI safety guidelines."
-                ),
-                reference=None,
-            ))
+            findings.append(
+                Finding(
+                    rule_id=self.rule_id,
+                    title=self.title,
+                    description=self.description,
+                    severity=Severity.CRITICAL,
+                    category=FindingCategory.INJECTION,
+                    file_path=fpath,
+                    line_number=line,
+                    matched_content=matched[:200],
+                    remediation=(
+                        "Skills must not contain jailbreak patterns or "
+                        "attempt to override AI safety guidelines."
+                    ),
+                    reference=None,
+                )
+            )
         return findings
 
 
@@ -95,7 +98,6 @@ class MetadataInjection(Rule):
         re.compile(r"ignore\s+(all\s+)?(previous|prior)\s+instructions", re.IGNORECASE),
         re.compile(r"disregard\s+(all\s+|the\s+)?(above|previous)", re.IGNORECASE),
         re.compile(r"\[SYSTEM\]", re.IGNORECASE),
-        re.compile(r"curl\s+[^|]*\|\s*(bash|sh)", re.IGNORECASE),
         re.compile(r"you\s+are\s+now", re.IGNORECASE),
         re.compile(r"<!--.*(?:ignore|disregard|override)", re.IGNORECASE),
     ]
@@ -111,19 +113,21 @@ class MetadataInjection(Rule):
             for pat in self._injection_patterns:
                 m = pat.search(value)
                 if m:
-                    findings.append(Finding(
-                        rule_id=self.rule_id,
-                        title=self.title,
-                        description=f"Injection pattern found in metadata field '{key}'",
-                        severity=Severity.CRITICAL,
-                        category=FindingCategory.INJECTION,
-                        file_path=skill_md,
-                        line_number=None,
-                        matched_content=m.group(0)[:200],
-                        remediation=(
-                            "YAML metadata fields should not contain "
-                            "prompt injection patterns or embedded commands."
-                        ),
-                        reference=None,
-                    ))
+                    findings.append(
+                        Finding(
+                            rule_id=self.rule_id,
+                            title=self.title,
+                            description=f"Injection pattern found in metadata field '{key}'",
+                            severity=Severity.CRITICAL,
+                            category=FindingCategory.INJECTION,
+                            file_path=skill_md,
+                            line_number=None,
+                            matched_content=m.group(0)[:200],
+                            remediation=(
+                                "YAML metadata fields should not contain "
+                                "prompt injection patterns or embedded commands."
+                            ),
+                            reference=None,
+                        )
+                    )
         return findings

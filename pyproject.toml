@@ -46,6 +46,9 @@ waingro = "waingro.cli:main"
 Homepage = "https://github.com/north-echo/waingro"
 Issues = "https://github.com/north-echo/waingro/issues"
 
+[tool.setuptools.package-data]
+waingro = ["data/*.txt"]
+
 [tool.ruff]
 target-version = "py311"
 line-length = 100

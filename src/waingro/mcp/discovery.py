@@ -2,16 +2,16 @@
 
 import json
 import re
-import subprocess
-import urllib.request
 import urllib.error
-from dataclasses import dataclass, field
+import urllib.request
+from dataclasses import dataclass
 from pathlib import Path
 
 
 @dataclass
 class MCPServerEntry:
     """A discovered MCP server entry."""
+
     name: str
     source: str  # "npm", "github", "awesome-list"
     url: str | None = None
@@ -33,9 +33,7 @@ def discover_from_awesome_list(readme_path: Path) -> list[MCPServerEntry]:
     seen_urls = set()
 
     # Match markdown links to GitHub repos: [Name](https://github.com/owner/repo)
-    link_re = re.compile(
-        r"\*?\*?\[([^\]]+)\]\((https://github\.com/[^/]+/[^/)]+)\)"
-    )
+    link_re = re.compile(r"\*?\*?\[([^\]]+)\]\((https://github\.com/[^/]+/[^/)]+)\)")
 
     for m in link_re.finditer(content):
         name = m.group(1).strip("*")
@@ -47,14 +45,16 @@ def discover_from_awesome_list(readme_path: Path) -> list[MCPServerEntry]:
 
         # Get description: text after the link on the same line
         line_end = content.find("\n", m.end())
-        desc_text = content[m.end():line_end].strip(" -–—") if line_end > 0 else None
+        desc_text = content[m.end() : line_end].strip(" -–—") if line_end > 0 else None
 
-        entries.append(MCPServerEntry(
-            name=name,
-            source="awesome-list",
-            url=url,
-            description=desc_text[:200] if desc_text else None,
-        ))
+        entries.append(
+            MCPServerEntry(
+                name=name,
+                source="awesome-list",
+                url=url,
+                description=desc_text[:200] if desc_text else None,
+            )
+        )
 
     return entries
 
@@ -73,8 +73,11 @@ def discover_from_npm(keywords: list[str] | None = None, limit: int = 250) -> li
     for keyword in keywords:
         url = f"https://registry.npmjs.org/-/v1/search?text={keyword}&size={limit}"
         try:
-            req = urllib.request.Request(url, headers={"Accept": "application/json"})
-            with urllib.request.urlopen(req, timeout=30) as resp:
+            # The scheme and host are constants; only the query value varies.
+            req = urllib.request.Request(  # noqa: S310
+                url, headers={"Accept": "application/json"}
+            )
+            with urllib.request.urlopen(req, timeout=30) as resp:  # noqa: S310
                 data = json.loads(resp.read())
         except (urllib.error.URLError, json.JSONDecodeError, TimeoutError) as e:
             print(f"  Warning: npm search for '{keyword}' failed: {e}")
@@ -91,13 +94,15 @@ def discover_from_npm(keywords: list[str] | None = None, limit: int = 250) -> li
             repo = pkg.get("links", {}).get("repository", "")
             npm_url = pkg.get("links", {}).get("npm", "")
 
-            entries.append(MCPServerEntry(
-                name=name,
-                source="npm",
-                url=repo or npm_url or f"https://www.npmjs.com/package/{name}",
-                npm_package=name,
-                description=pkg.get("description", "")[:200],
-            ))
+            entries.append(
+                MCPServerEntry(
+                    name=name,
+                    source="npm",
+                    url=repo or npm_url or f"https://www.npmjs.com/package/{name}",
+                    npm_package=name,
+                    description=pkg.get("description", "")[:200],
+                )
+            )
 
     return entries
 
@@ -124,11 +129,15 @@ def discover_from_github(
                 f"q=topic:{topic}&sort=stars&per_page={per_page}&page={page}"
             )
             try:
-                req = urllib.request.Request(url, headers={
-                    "Accept": "application/vnd.github+json",
-                    "User-Agent": "waingro-mcp-scanner",
-                })
-                with urllib.request.urlopen(req, timeout=30) as resp:
+                # The scheme and host are constants; topic/page only affect the query.
+                req = urllib.request.Request(  # noqa: S310
+                    url,
+                    headers={
+                        "Accept": "application/vnd.github+json",
+                        "User-Agent": "waingro-mcp-scanner",
+                    },
+                )
+                with urllib.request.urlopen(req, timeout=30) as resp:  # noqa: S310
                     data = json.loads(resp.read())
             except (urllib.error.URLError, json.JSONDecodeError, TimeoutError) as e:
                 print(f"  Warning: GitHub search for topic '{topic}' page {page} failed: {e}")
@@ -144,15 +153,19 @@ def discover_from_github(
                     continue
                 seen_urls.add(html_url)
 
-                entries.append(MCPServerEntry(
-                    name=repo.get("full_name", repo.get("name", "")),
-                    source="github",
-                    url=html_url,
-                    description=repo.get("description", "")[:200] if repo.get("description") else None,
-                    stars=repo.get("stargazers_count"),
-                    language=repo.get("language"),
-                    last_updated=repo.get("pushed_at"),
-                ))
+                entries.append(
+                    MCPServerEntry(
+                        name=repo.get("full_name", repo.get("name", "")),
+                        source="github",
+                        url=html_url,
+                        description=repo.get("description", "")[:200]
+                        if repo.get("description")
+                        else None,
+                        stars=repo.get("stargazers_count"),
+                        language=repo.get("language"),
+                        last_updated=repo.get("pushed_at"),
+                    )
+                )
 
     return entries
 
@@ -200,19 +213,19 @@ def run_discovery(
     all_entries = []
 
     if awesome_readme:
-        print(f"[1/3] Parsing awesome-mcp-servers list...")
+        print("[1/3] Parsing awesome-mcp-servers list...")
         awesome = discover_from_awesome_list(awesome_readme)
         print(f"  Found {len(awesome)} entries from awesome list")
         all_entries.extend(awesome)
 
     if include_npm:
-        print(f"[2/3] Searching npm registry...")
+        print("[2/3] Searching npm registry...")
         npm = discover_from_npm()
         print(f"  Found {len(npm)} entries from npm")
         all_entries.extend(npm)
 
     if include_github:
-        print(f"[3/3] Searching GitHub topics...")
+        print("[3/3] Searching GitHub topics...")
         gh = discover_from_github()
         print(f"  Found {len(gh)} entries from GitHub")
         all_entries.extend(gh)
@@ -231,16 +244,18 @@ def _save_manifest(entries: list[MCPServerEntry], path: Path) -> None:
     """Save discovery manifest as JSON."""
     data = []
     for e in entries:
-        data.append({
-            "name": e.name,
-            "source": e.source,
-            "url": e.url,
-            "npm_package": e.npm_package,
-            "description": e.description,
-            "stars": e.stars,
-            "language": e.language,
-            "last_updated": e.last_updated,
-        })
+        data.append(
+            {
+                "name": e.name,
+                "source": e.source,
+                "url": e.url,
+                "npm_package": e.npm_package,
+                "description": e.description,
+                "stars": e.stars,
+                "language": e.language,
+                "last_updated": e.last_updated,
+            }
+        )
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(data, indent=2), encoding="utf-8")
 

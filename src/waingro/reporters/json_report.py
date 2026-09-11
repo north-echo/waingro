@@ -7,10 +7,24 @@ from waingro import __version__
 from waingro.models import ScanResult, Severity
 
 
-def result_to_dict(result: ScanResult) -> dict:
+def _at_or_above(severity: Severity, threshold: Severity) -> bool:
+    return list(Severity).index(severity) <= list(Severity).index(threshold)
+
+
+def _display_path(result: ScanResult, path: Path) -> str:
+    if not path.is_absolute():
+        return str(path)
+    try:
+        return str(path.relative_to(result.skill_path))
+    except ValueError:
+        return str(path)
+
+
+def result_to_dict(result: ScanResult, min_severity: Severity = Severity.INFO) -> dict:
     """Convert a ScanResult to a JSON-serializable dict."""
+    findings = [f for f in result.findings if _at_or_above(f.severity, min_severity)]
     counts = {sev: 0 for sev in Severity}
-    for f in result.findings:
+    for f in findings:
         counts[f.severity] += 1
 
     return {
@@ -34,7 +48,7 @@ def result_to_dict(result: ScanResult) -> dict:
                 "title": f.title,
                 "severity": f.severity.value,
                 "category": f.category.value,
-                "file_path": f.file_path.name,
+                "file_path": _display_path(result, f.file_path),
                 "line_number": f.line_number,
                 "matched_content": f.matched_content,
                 "remediation": f.remediation,
@@ -42,14 +56,14 @@ def result_to_dict(result: ScanResult) -> dict:
                 "confidence": f.confidence,
                 "context_note": f.context_note,
             }
-            for f in result.findings
+            for f in findings
         ],
     }
 
 
-def format_json(result: ScanResult) -> str:
+def format_json(result: ScanResult, min_severity: Severity = Severity.INFO) -> str:
     """Format a ScanResult as a JSON string."""
-    return json.dumps(result_to_dict(result), indent=2)
+    return json.dumps(result_to_dict(result, min_severity), indent=2)
 
 
 def format_audit_json(results: list[ScanResult]) -> str:

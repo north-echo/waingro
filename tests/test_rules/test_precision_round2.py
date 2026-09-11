@@ -4,7 +4,6 @@ Each case here is a real false positive observed while scanning skills pulled
 from the live ClawHub registry, paired with the true positive it must not cost.
 """
 
-import re
 
 from waingro.models import Severity
 from waingro.parsers.skill import parse_skill
