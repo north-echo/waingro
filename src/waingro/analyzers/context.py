@@ -1,35 +1,68 @@
 """Post-analysis context scoring to identify security tools with detection signatures."""
 
 import re
+from contextlib import suppress
 
 from waingro.models import Finding, ParsedSkill
 from waingro.parsers.sections import find_section_for_line
 
 SECURITY_KEYWORDS = [
-    "scanner", "scan", "audit", "auditor", "security", "guard",
-    "shield", "defender", "firewall", "blocker", "lint", "sentinel",
-    "monitor", "protection", "detection", "defense", "safety",
+    "scanner",
+    "scan",
+    "audit",
+    "auditor",
+    "security",
+    "guard",
+    "shield",
+    "defender",
+    "firewall",
+    "blocker",
+    "lint",
+    "sentinel",
+    "monitor",
+    "protection",
+    "detection",
+    "defense",
+    "safety",
 ]
 
 DEFENSIVE_HEADINGS = [
-    "what it detects", "blocked patterns", "instant block",
-    "threat categories", "detection patterns", "security checks",
-    "risk assessment", "blacklist_patterns", "threat model",
-    "attack patterns", "what it catches", "defense protocol",
-    "detection engines", "risk score", "known threats",
-    "examples of malicious", "threat database",
+    "what it detects",
+    "blocked patterns",
+    "instant block",
+    "threat categories",
+    "detection patterns",
+    "security checks",
+    "risk assessment",
+    "blacklist_patterns",
+    "threat model",
+    "attack patterns",
+    "what it catches",
+    "defense protocol",
+    "detection engines",
+    "risk score",
+    "known threats",
+    "examples of malicious",
+    "threat database",
 ]
 
 DETECTION_MARKERS = [
-    "scanner notice", "detection patterns", "used to block",
-    "not instructions for the agent", "\u274c", "\u2705",
-    "false positive", "benign:", "malicious:",
+    "scanner notice",
+    "detection patterns",
+    "used to block",
+    "not instructions for the agent",
+    "\u274c",
+    "\u2705",
+    "false positive",
+    "benign:",
+    "malicious:",
     "contains_threat_signatures",
 ]
 
 
 def compute_security_tool_score(
-    skill: ParsedSkill, findings: list[Finding],
+    skill: ParsedSkill,
+    findings: list[Finding],
 ) -> float:
     """Return 0.0 (not a security tool) to 1.0 (almost certainly a security tool)."""
     score = 0.0
@@ -82,30 +115,54 @@ def adjust_finding_confidence(
     skill: ParsedSkill | None = None,
 ) -> list[Finding]:
     """Reduce confidence on findings when the skill is likely a security tool."""
-    if security_tool_score < 0.3:
-        return findings
-
     sections = skill.sections if skill else []
 
     for finding in findings:
-        # Never reduce confidence on NET-002 (known C2 IPs)
-        if finding.rule_id == "NET-002":
+        section = None
+        if sections and finding.line_number:
+            section = find_section_for_line(sections, finding.line_number)
+
+        relative_path = finding.file_path
+        if skill:
+            with suppress(ValueError):
+                relative_path = finding.file_path.relative_to(skill.path)
+        fixture_parts = {
+            "test",
+            "tests",
+            "spec",
+            "specs",
+            "fixture",
+            "fixtures",
+            "mocks",
+        }
+        is_defensive_fixture = (
+            skill is not None
+            and security_tool_score >= 0.3
+            and bool({part.lower() for part in relative_path.parts} & fixture_parts)
+        )
+        is_detection_section = bool(section and section.category == "detection")
+
+        if is_defensive_fixture or is_detection_section:
+            finding.confidence = min(finding.confidence, 0.1)
+            reason = (
+                "security-tool test/fixture path" if is_defensive_fixture else "detection section"
+            )
+            finding.context_note = (
+                f"Pattern appears in a {reason}; treat it as evidence to review, "
+                "not proof of malicious runtime behavior."
+            )
+            continue
+
+        if security_tool_score < 0.3 or finding.rule_id == "NET-002":
             continue
 
         reduction = security_tool_score * 0.8
 
-        # Layer 2: further reduce confidence if finding is in a detection section
-        section = None
-        if sections and finding.line_number:
-            section = find_section_for_line(sections, finding.line_number)
-            if section and section.category == "detection":
-                reduction = min(reduction + 0.15, 0.95)
-
-        finding.confidence = round(max(1.0 - reduction, 0.1), 2)
+        finding.confidence = round(max(finding.confidence * (1.0 - reduction), 0.1), 2)
 
         section_note = ""
         if section:
-            section_note = f" Section: \"{section.heading}\" ({section.category})."
+            section_note = f' Section: "{section.heading}" ({section.category}).'
         finding.context_note = (
             f"Pattern found in probable security tool "
             f"(security_tool_score={security_tool_score:.2f}).{section_note} "

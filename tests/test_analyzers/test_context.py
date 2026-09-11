@@ -4,6 +4,7 @@ from pathlib import Path
 
 from waingro.analyzers.context import adjust_finding_confidence, compute_security_tool_score
 from waingro.models import Finding, FindingCategory, Severity
+from waingro.parsers.sections import parse_sections
 
 # --- Security tool score tests ---
 
@@ -191,6 +192,42 @@ def test_confidence_unchanged_below_threshold():
     adjusted = adjust_finding_confidence(findings, security_tool_score=0.2)
     assert adjusted[0].confidence == 1.0
     assert adjusted[0].context_note is None
+
+
+def test_adjustment_never_increases_existing_low_confidence():
+    finding = _make_finding("EXEC-001")
+    finding.confidence = 0.4
+    adjusted = adjust_finding_confidence([finding], security_tool_score=0.35)
+    assert adjusted[0].confidence <= 0.4
+
+
+def test_security_tool_fixture_path_is_low_confidence(make_inline_skill):
+    skill = make_inline_skill()
+    finding = _make_finding("NET-002", category=FindingCategory.NETWORK)
+    finding.file_path = skill.path / "tests" / "fixtures" / "payload.py"
+    adjusted = adjust_finding_confidence([finding], security_tool_score=0.7, skill=skill)
+    assert adjusted[0].confidence == 0.1
+    assert "security-tool test/fixture path" in (adjusted[0].context_note or "")
+
+
+def test_fixture_path_alone_does_not_reduce_confidence(make_inline_skill):
+    skill = make_inline_skill()
+    finding = _make_finding("EXEC-002", severity=Severity.CRITICAL)
+    finding.file_path = skill.path / "tests" / "payload.py"
+    adjusted = adjust_finding_confidence([finding], security_tool_score=0.0, skill=skill)
+    assert adjusted[0].confidence == 1.0
+    assert adjusted[0].context_note is None
+
+
+def test_detection_section_is_low_confidence_without_global_score(make_inline_skill):
+    body = "# Scanner\n\n## Red Flag Examples\n\n### Encoded payload\n\nexample\n"
+    skill = make_inline_skill(body=body)
+    skill.sections = parse_sections(body)
+    finding = _make_finding("OBFUSC-001", severity=Severity.CRITICAL)
+    finding.line_number = 7
+    adjusted = adjust_finding_confidence([finding], security_tool_score=0.1, skill=skill)
+    assert adjusted[0].confidence == 0.1
+    assert "detection section" in (adjusted[0].context_note or "")
 
 
 def test_net002_confidence_never_reduced():

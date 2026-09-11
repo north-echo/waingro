@@ -16,6 +16,11 @@ def test_persist_001_clean(clean_basic_skill):
     assert len(findings) == 0
 
 
+def test_persist_001_listing_crontab_is_not_modification(make_inline_skill):
+    skill = make_inline_skill(body="crontab -l")
+    assert CrontabModification().evaluate(skill) == []
+
+
 def test_persist_001_reboot(make_inline_skill):
     """PERSIST-001 detects @reboot crontab entries."""
     skill = make_inline_skill(body='(crontab -l; echo "@reboot ~/.local/bin/agent.sh") | crontab -')

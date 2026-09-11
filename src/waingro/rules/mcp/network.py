@@ -22,18 +22,15 @@ class TransportExfiltration(MCPRule):
         re.compile(r"nc\s+(-e|--exec)\s+/bin/(sh|bash)"),
         re.compile(r"/dev/tcp/\d+\.\d+\.\d+\.\d+/\d+"),
         re.compile(r"import\s+socket\s*,\s*subprocess\s*,\s*os"),
-
         # Tunneling services
         re.compile(r"\bngrok\b"),
         re.compile(r"\bcloudflared\s+tunnel\b"),
         re.compile(r"bore\.pub"),
         re.compile(r"\blocaltunnel\b"),
         re.compile(r"serveo\.net"),
-
         # DNS exfiltration
         re.compile(r"dig\s+.*\$\{?\w+\}?\..*\.", re.IGNORECASE),
         re.compile(r"nslookup\s+.*\$\{?\w+\}?\.", re.IGNORECASE),
-
         # Raw socket connections (not HTTP — actual TCP/UDP sockets)
         re.compile(r"net\.createConnection\s*\("),
         re.compile(r"socket\.socket\s*\(\s*socket\.AF_INET"),
@@ -50,37 +47,41 @@ class TransportExfiltration(MCPRule):
 
         # Critical patterns — always flag
         for matched, line, fpath in search_source_content(server, self._critical_patterns):
-            findings.append(Finding(
-                rule_id=self.rule_id,
-                title=self.title,
-                description=self.description,
-                severity=Severity.CRITICAL,
-                category=FindingCategory.NETWORK,
-                file_path=fpath,
-                line_number=line,
-                matched_content=matched[:200],
-                remediation=(
-                    "MCP servers must not contain reverse shells, tunneling "
-                    "services, DNS exfiltration, or raw socket connections."
-                ),
-                reference="AuthTool campaign; Adversa #13; vulnmcp.info",
-                confidence=1.0,
-            ))
+            findings.append(
+                Finding(
+                    rule_id=self.rule_id,
+                    title=self.title,
+                    description=self.description,
+                    severity=Severity.CRITICAL,
+                    category=FindingCategory.NETWORK,
+                    file_path=fpath,
+                    line_number=line,
+                    matched_content=matched[:200],
+                    remediation=(
+                        "MCP servers must not contain reverse shells, tunneling "
+                        "services, DNS exfiltration, or raw socket connections."
+                    ),
+                    reference="AuthTool campaign; Adversa #13; vulnmcp.info",
+                    confidence=1.0,
+                )
+            )
 
         # Medium patterns — flag with lower confidence
         for matched, line, fpath in search_source_content(server, self._medium_patterns):
-            findings.append(Finding(
-                rule_id=self.rule_id,
-                title="WebSocket/raw connection to external host",
-                description="Outbound connection to non-localhost destination",
-                severity=Severity.MEDIUM,
-                category=FindingCategory.NETWORK,
-                file_path=fpath,
-                line_number=line,
-                matched_content=matched[:200],
-                remediation="Review whether this outbound connection is expected.",
-                reference=None,
-                confidence=0.5,
-            ))
+            findings.append(
+                Finding(
+                    rule_id=self.rule_id,
+                    title="WebSocket/raw connection to external host",
+                    description="Outbound connection to non-localhost destination",
+                    severity=Severity.MEDIUM,
+                    category=FindingCategory.NETWORK,
+                    file_path=fpath,
+                    line_number=line,
+                    matched_content=matched[:200],
+                    remediation="Review whether this outbound connection is expected.",
+                    reference=None,
+                    confidence=0.5,
+                )
+            )
 
         return findings

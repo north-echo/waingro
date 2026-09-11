@@ -1,5 +1,7 @@
 """Rich-formatted console output."""
 
+from typing import TextIO
+
 from rich.console import Console
 
 from waingro import __version__
@@ -22,9 +24,25 @@ VERDICT_COLORS = {
 }
 
 
-def print_result(result: ScanResult, quiet: bool = False, no_color: bool = False) -> None:
+def _console(no_color: bool, file: TextIO | None) -> Console:
+    options = {"no_color": no_color, "markup": False, "highlight": False}
+    return Console(file=file, **options) if file else Console(**options)
+
+
+def print_result(
+    result: ScanResult,
+    quiet: bool = False,
+    no_color: bool = False,
+    file: TextIO | None = None,
+    min_severity: Severity = Severity.INFO,
+) -> None:
     """Print scan result to console with Rich formatting."""
-    console = Console(no_color=no_color)
+    console = _console(no_color, file)
+    findings = [
+        finding
+        for finding in result.findings
+        if list(Severity).index(finding.severity) <= list(Severity).index(min_severity)
+    ]
 
     if not quiet:
         console.print()
@@ -41,10 +59,10 @@ def print_result(result: ScanResult, quiet: bool = False, no_color: bool = False
     if quiet:
         return
 
-    if result.findings:
+    if findings:
         console.print()
 
-    for finding in result.findings:
+    for finding in findings:
         sev_style = SEVERITY_COLORS.get(finding.severity, "")
         sev_label = finding.severity.value.upper().ljust(9)
 
@@ -80,9 +98,9 @@ def print_result(result: ScanResult, quiet: bool = False, no_color: bool = False
         console.print()
 
     # Summary
-    if result.findings:
+    if findings:
         counts = {sev: 0 for sev in Severity}
-        for f in result.findings:
+        for f in findings:
             counts[f.severity] += 1
         parts = [
             f"{counts[Severity.CRITICAL]} CRITICAL",
@@ -95,10 +113,13 @@ def print_result(result: ScanResult, quiet: bool = False, no_color: bool = False
 
 
 def print_audit_results(
-    results: list[ScanResult], quiet: bool = False, no_color: bool = False
+    results: list[ScanResult],
+    quiet: bool = False,
+    no_color: bool = False,
+    file: TextIO | None = None,
 ) -> None:
     """Print audit results for multiple skills."""
-    console = Console(no_color=no_color)
+    console = _console(no_color, file)
 
     if not quiet:
         console.print()

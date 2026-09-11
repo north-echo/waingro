@@ -21,12 +21,10 @@ class MissingAuthentication(MCPRule):
         # SSE/HTTP servers without auth middleware
         re.compile(r"app\.(?:get|post|use)\s*\([^)]*(?:sse|mcp|message)", re.IGNORECASE),
         re.compile(r"createServer\s*\(\s*(?:async\s*)?\(\s*req"),
-
         # Explicit auth bypass
         re.compile(r"auth\s*(?:=|:)\s*(?:false|null|none|disabled)", re.IGNORECASE),
         re.compile(r"skipAuth|noAuth|disableAuth|bypassAuth", re.IGNORECASE),
         re.compile(r"requireAuth\s*(?:=|:)\s*false", re.IGNORECASE),
-
         # Hardcoded credentials/tokens
         re.compile(r"(?:password|token|secret|apiKey)\s*(?:=|:)\s*['\"][^'\"]{5,}['\"]"),
     ]
@@ -54,22 +52,27 @@ class MissingAuthentication(MCPRule):
 
         for matched, line, fpath in search_source_content(server, self._no_auth_patterns):
             confidence = 0.4 if has_auth else 0.9
-            findings.append(Finding(
-                rule_id=self.rule_id,
-                title=self.title,
-                description=self.description,
-                severity=Severity.HIGH,
-                category=FindingCategory.SCOPE_ESCALATION,
-                file_path=fpath,
-                line_number=line,
-                matched_content=matched[:200],
-                remediation=(
-                    "MCP servers exposed over HTTP/SSE must implement authentication. "
-                    "The MCP spec notes this is the implementor's responsibility."
-                ),
-                reference="OWASP MCP-07; Adversa #5; CVE-2025-49596 (MCP Inspector RCE via no auth)",
-                confidence=confidence,
-            ))
+            findings.append(
+                Finding(
+                    rule_id=self.rule_id,
+                    title=self.title,
+                    description=self.description,
+                    severity=Severity.HIGH,
+                    category=FindingCategory.SCOPE_ESCALATION,
+                    file_path=fpath,
+                    line_number=line,
+                    matched_content=matched[:200],
+                    remediation=(
+                        "MCP servers exposed over HTTP/SSE must implement authentication. "
+                        "The MCP spec notes this is the implementor's responsibility."
+                    ),
+                    reference=(
+                        "OWASP MCP-07; Adversa #5; "
+                        "CVE-2025-49596 (MCP Inspector RCE via no auth)"
+                    ),
+                    confidence=confidence,
+                )
+            )
 
         return findings
 
@@ -90,7 +93,6 @@ class LocalhostBindingIssue(MCPRule):
         re.compile(r"host\s*(?:=|:)\s*['\"]0\.0\.0\.0['\"]"),
         re.compile(r"bind\s*\(\s*\(['\"]0\.0\.0\.0['\"]"),
         re.compile(r"INADDR_ANY"),
-
         # Missing DNS rebinding protection
         re.compile(r"Access-Control-Allow-Origin\s*(?:=|:)\s*['\"]?\*"),
     ]
@@ -114,21 +116,23 @@ class LocalhostBindingIssue(MCPRule):
             if self._localhost_re.search(context):
                 continue
 
-            findings.append(Finding(
-                rule_id=self.rule_id,
-                title=self.title,
-                description=self.description,
-                severity=Severity.HIGH,
-                category=FindingCategory.NETWORK,
-                file_path=fpath,
-                line_number=line,
-                matched_content=matched[:200],
-                remediation=(
-                    "MCP servers should bind to 127.0.0.1/localhost only. "
-                    "Binding to 0.0.0.0 exposes the service to the network."
-                ),
-                reference="Adversa #13; CVE-2026-23744 (MCPJam Inspector 0.0.0.0 RCE)",
-            ))
+            findings.append(
+                Finding(
+                    rule_id=self.rule_id,
+                    title=self.title,
+                    description=self.description,
+                    severity=Severity.HIGH,
+                    category=FindingCategory.NETWORK,
+                    file_path=fpath,
+                    line_number=line,
+                    matched_content=matched[:200],
+                    remediation=(
+                        "MCP servers should bind to 127.0.0.1/localhost only. "
+                        "Binding to 0.0.0.0 exposes the service to the network."
+                    ),
+                    reference="Adversa #13; CVE-2026-23744 (MCPJam Inspector 0.0.0.0 RCE)",
+                )
+            )
 
         return findings
 

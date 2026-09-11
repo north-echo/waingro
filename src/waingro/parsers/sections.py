@@ -8,25 +8,55 @@ from dataclasses import dataclass
 HEADING_RE = re.compile(r"^(#{1,6})\s+(.+)$")
 
 USAGE_HEADINGS = {
-    "usage", "quick start", "how to use", "getting started", "commands",
-    "installation", "setup", "run", "execute", "how it works",
+    "usage",
+    "quick start",
+    "how to use",
+    "getting started",
+    "commands",
+    "installation",
+    "setup",
+    "run",
+    "execute",
+    "how it works",
 }
 
 DETECTION_HEADINGS = {
-    "what it detects", "detection patterns", "blocked patterns",
-    "instant block", "threat categories", "blacklist", "threat model",
-    "attack patterns", "security checks", "risk assessment",
-    "examples of malicious", "known threats", "threat database",
-    "blacklist_patterns", "what it catches", "defense protocol",
+    "what it detects",
+    "detection patterns",
+    "blocked patterns",
+    "instant block",
+    "threat categories",
+    "blacklist",
+    "threat model",
+    "attack patterns",
+    "security checks",
+    "risk assessment",
+    "examples of malicious",
+    "known threats",
+    "threat database",
+    "blacklist_patterns",
+    "what it catches",
+    "defense protocol",
     "detection engines",
+    "red flag",
+    "obfuscated code",
+    "credential theft",
 }
 
 DOCUMENTATION_HEADINGS = {
-    "about", "description", "overview", "architecture", "features",
+    "about",
+    "description",
+    "overview",
+    "architecture",
+    "features",
 }
 
 CONFIGURATION_HEADINGS = {
-    "configuration", "config", "settings", "options", "environment variables",
+    "configuration",
+    "config",
+    "settings",
+    "options",
+    "environment variables",
 }
 
 
@@ -62,7 +92,7 @@ def parse_sections(body: str, start_line_offset: int = 0) -> list[MarkdownSectio
     """Parse markdown body into sections with heading classification."""
     lines = body.split("\n")
     sections: list[MarkdownSection] = []
-    heading_stack: list[tuple[int, str]] = []  # (level, heading)
+    heading_stack: list[tuple[int, str, str]] = []  # (level, heading, category)
 
     for i, line in enumerate(lines):
         m = HEADING_RE.match(line)
@@ -81,16 +111,23 @@ def parse_sections(body: str, start_line_offset: int = 0) -> list[MarkdownSectio
         while heading_stack and heading_stack[-1][0] >= level:
             heading_stack.pop()
         parent = heading_stack[-1][1] if heading_stack else None
-        heading_stack.append((level, heading))
+        category = classify_heading(heading)
+        if category == "unknown" and heading_stack:
+            parent_category = heading_stack[-1][2]
+            if parent_category == "detection":
+                category = parent_category
+        heading_stack.append((level, heading, category))
 
-        sections.append(MarkdownSection(
-            heading=heading,
-            level=level,
-            start_line=line_num,
-            end_line=len(lines) + start_line_offset,  # default to end
-            category=classify_heading(heading),
-            parent_heading=parent,
-        ))
+        sections.append(
+            MarkdownSection(
+                heading=heading,
+                level=level,
+                start_line=line_num,
+                end_line=len(lines) + start_line_offset,  # default to end
+                category=category,
+                parent_heading=parent,
+            )
+        )
 
     # Close last section
     if sections:
@@ -100,7 +137,8 @@ def parse_sections(body: str, start_line_offset: int = 0) -> list[MarkdownSectio
 
 
 def find_section_for_line(
-    sections: list[MarkdownSection], line_number: int,
+    sections: list[MarkdownSection],
+    line_number: int,
 ) -> MarkdownSection | None:
     """Find the section containing a given line number."""
     for section in reversed(sections):

@@ -13,8 +13,8 @@ class CrontabModification(Rule):
     description = "Detects crontab manipulation for persistence"
 
     _patterns = [
-        re.compile(r"crontab\s+-[el]"),
-        re.compile(r"crontab\s+-"),
+        re.compile(r"crontab\s+-e\b"),
+        re.compile(r"(?:^|[|;&]\s*)crontab\s+-(?:\s|$)"),
         re.compile(r"\*/\d+\s+\*\s+\*\s+\*\s+\*"),
         re.compile(r"@reboot\s+"),
     ]
@@ -22,18 +22,20 @@ class CrontabModification(Rule):
     def evaluate(self, skill: ParsedSkill) -> list[Finding]:
         findings = []
         for matched, line, fpath in search_skill_content(skill, self._patterns):
-            findings.append(Finding(
-                rule_id=self.rule_id,
-                title=self.title,
-                description=self.description,
-                severity=Severity.HIGH,
-                category=FindingCategory.PERSISTENCE,
-                file_path=fpath,
-                line_number=line,
-                matched_content=matched[:200],
-                remediation="Skills should not modify crontab entries.",
-                reference=None,
-            ))
+            findings.append(
+                Finding(
+                    rule_id=self.rule_id,
+                    title=self.title,
+                    description=self.description,
+                    severity=Severity.HIGH,
+                    category=FindingCategory.PERSISTENCE,
+                    file_path=fpath,
+                    line_number=line,
+                    matched_content=matched[:200],
+                    remediation="Skills should not modify crontab entries.",
+                    reference=None,
+                )
+            )
         return findings
 
 
@@ -53,18 +55,20 @@ class LaunchAgent(Rule):
     def evaluate(self, skill: ParsedSkill) -> list[Finding]:
         findings = []
         for matched, line, fpath in search_skill_content(skill, self._patterns):
-            findings.append(Finding(
-                rule_id=self.rule_id,
-                title=self.title,
-                description=self.description,
-                severity=Severity.HIGH,
-                category=FindingCategory.PERSISTENCE,
-                file_path=fpath,
-                line_number=line,
-                matched_content=matched[:200],
-                remediation="Skills should not create LaunchAgents or LaunchDaemons.",
-                reference=None,
-            ))
+            findings.append(
+                Finding(
+                    rule_id=self.rule_id,
+                    title=self.title,
+                    description=self.description,
+                    severity=Severity.HIGH,
+                    category=FindingCategory.PERSISTENCE,
+                    file_path=fpath,
+                    line_number=line,
+                    matched_content=matched[:200],
+                    remediation="Skills should not create LaunchAgents or LaunchDaemons.",
+                    reference=None,
+                )
+            )
         return findings
 
 
@@ -84,18 +88,20 @@ class SystemdUnit(Rule):
     def evaluate(self, skill: ParsedSkill) -> list[Finding]:
         findings = []
         for matched, line, fpath in search_skill_content(skill, self._patterns):
-            findings.append(Finding(
-                rule_id=self.rule_id,
-                title=self.title,
-                description=self.description,
-                severity=Severity.HIGH,
-                category=FindingCategory.PERSISTENCE,
-                file_path=fpath,
-                line_number=line,
-                matched_content=matched[:200],
-                remediation="Skills should not create systemd service units.",
-                reference=None,
-            ))
+            findings.append(
+                Finding(
+                    rule_id=self.rule_id,
+                    title=self.title,
+                    description=self.description,
+                    severity=Severity.HIGH,
+                    category=FindingCategory.PERSISTENCE,
+                    file_path=fpath,
+                    line_number=line,
+                    matched_content=matched[:200],
+                    remediation="Skills should not create systemd service units.",
+                    reference=None,
+                )
+            )
         return findings
 
 
@@ -116,16 +122,18 @@ class ShellProfileModification(Rule):
     def evaluate(self, skill: ParsedSkill) -> list[Finding]:
         findings = []
         for matched, line, fpath in search_skill_content(skill, self._patterns):
-            findings.append(Finding(
-                rule_id=self.rule_id,
-                title=self.title,
-                description=self.description,
-                severity=Severity.MEDIUM,
-                category=FindingCategory.PERSISTENCE,
-                file_path=fpath,
-                line_number=line,
-                matched_content=matched[:200],
-                remediation="Skills should not modify shell profile files.",
-                reference=None,
-            ))
+            findings.append(
+                Finding(
+                    rule_id=self.rule_id,
+                    title=self.title,
+                    description=self.description,
+                    severity=Severity.MEDIUM,
+                    category=FindingCategory.PERSISTENCE,
+                    file_path=fpath,
+                    line_number=line,
+                    matched_content=matched[:200],
+                    remediation="Skills should not modify shell profile files.",
+                    reference=None,
+                )
+            )
         return findings

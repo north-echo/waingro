@@ -2,22 +2,22 @@
 
 from pathlib import Path
 
-from waingro.mcp.models import MCPScanResult
-from waingro.mcp.parser import parse_mcp_server
-from waingro.rules.mcp import get_all_rules
+import waingro.rules.mcp.auth  # noqa: F401
+import waingro.rules.mcp.cross_tool  # noqa: F401
+import waingro.rules.mcp.execution  # noqa: F401
+import waingro.rules.mcp.exfiltration  # noqa: F401
 
 # Force rule registration by importing all rule modules
 import waingro.rules.mcp.injection  # noqa: F401
-import waingro.rules.mcp.execution  # noqa: F401
-import waingro.rules.mcp.exfiltration  # noqa: F401
-import waingro.rules.mcp.cross_tool  # noqa: F401
 import waingro.rules.mcp.network  # noqa: F401
-import waingro.rules.mcp.supply_chain  # noqa: F401
-import waingro.rules.mcp.scope  # noqa: F401
-import waingro.rules.mcp.auth  # noqa: F401
 import waingro.rules.mcp.path_traversal  # noqa: F401
+import waingro.rules.mcp.scope  # noqa: F401
 import waingro.rules.mcp.spoofing  # noqa: F401
+import waingro.rules.mcp.supply_chain  # noqa: F401
 import waingro.rules.mcp.typosquat  # noqa: F401
+from waingro.mcp.models import MCPScanResult
+from waingro.mcp.parser import parse_mcp_server
+from waingro.rules.mcp import get_all_rules
 
 
 def scan_server(path: Path) -> MCPScanResult:
@@ -72,8 +72,4 @@ def _looks_like_mcp_server(path: Path) -> bool:
         except OSError:
             pass
 
-    for name in ("mcp.json", "mcp-config.json"):
-        if (path / name).exists():
-            return True
-
-    return False
+    return any((path / name).exists() for name in ("mcp.json", "mcp-config.json"))

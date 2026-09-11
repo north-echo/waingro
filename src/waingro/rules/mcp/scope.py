@@ -3,7 +3,7 @@
 import re
 
 from waingro.mcp.models import Finding, FindingCategory, ParsedMCPServer, Severity
-from waingro.rules.mcp import MCPRule, register_rule, search_source_content, search_tool_definitions
+from waingro.rules.mcp import MCPRule, register_rule
 
 
 @register_rule
@@ -70,66 +70,82 @@ class ScopeEscalation(MCPRule):
             for pat in self._filesystem_patterns:
                 m = pat.search(handler_content)
                 if m:
-                    findings.append(Finding(
-                        rule_id=self.rule_id,
-                        title=f"Scope escalation: filesystem access in '{tool.name}'",
-                        description=f"Tool '{tool.name}' accesses the filesystem beyond its stated purpose",
-                        severity=Severity.HIGH,
-                        category=FindingCategory.SCOPE_ESCALATION,
-                        file_path=tool.handler_file or server.path,
-                        line_number=None,
-                        matched_content=m.group(0)[:200],
-                        remediation=(
-                            f"Tool '{tool.name}' should not need filesystem access. "
-                            "Review whether this capability is justified."
+                    findings.append(
+                        Finding(
+                            rule_id=self.rule_id,
+                            title=f"Scope escalation: filesystem access in '{tool.name}'",
+                        description=(
+                            f"Tool '{tool.name}' accesses the filesystem beyond "
+                            "its stated purpose"
                         ),
-                        reference=None,
-                    ))
+                            severity=Severity.HIGH,
+                            category=FindingCategory.SCOPE_ESCALATION,
+                            file_path=tool.handler_file or server.path,
+                            line_number=None,
+                            matched_content=m.group(0)[:200],
+                            remediation=(
+                                f"Tool '{tool.name}' should not need filesystem access. "
+                                "Review whether this capability is justified."
+                            ),
+                            reference=None,
+                        )
+                    )
                     break  # One filesystem finding per tool
 
             # Check for process execution in limited-scope tools
             for pat in self._process_patterns:
                 m = pat.search(handler_content)
                 if m:
-                    findings.append(Finding(
-                        rule_id=self.rule_id,
-                        title=f"Scope escalation: process execution in '{tool.name}'",
-                        description=f"Tool '{tool.name}' executes processes beyond its stated purpose",
-                        severity=Severity.CRITICAL,
-                        category=FindingCategory.SCOPE_ESCALATION,
-                        file_path=tool.handler_file or server.path,
-                        line_number=None,
-                        matched_content=m.group(0)[:200],
-                        remediation=(
-                            f"Tool '{tool.name}' should not need to execute processes. "
-                            "This may indicate hidden functionality."
-                        ),
-                        reference=None,
-                    ))
-                    break
-
-            # Check for network access in non-network tools
-            tool_name_lower = tool.name.lower()
-            if not any(kw in tool_name_lower for kw in ("api", "fetch", "http", "web", "url", "search", "weather")):
-                for pat in self._network_patterns:
-                    m = pat.search(handler_content)
-                    if m:
-                        findings.append(Finding(
+                    findings.append(
+                        Finding(
                             rule_id=self.rule_id,
-                            title=f"Scope escalation: network access in '{tool.name}'",
-                            description=f"Tool '{tool.name}' makes network requests beyond its stated purpose",
-                            severity=Severity.MEDIUM,
+                            title=f"Scope escalation: process execution in '{tool.name}'",
+                        description=(
+                            f"Tool '{tool.name}' executes processes beyond its stated purpose"
+                        ),
+                            severity=Severity.CRITICAL,
                             category=FindingCategory.SCOPE_ESCALATION,
                             file_path=tool.handler_file or server.path,
                             line_number=None,
                             matched_content=m.group(0)[:200],
                             remediation=(
-                                f"Tool '{tool.name}' should not need network access. "
-                                "Review whether outbound connections are justified."
+                                f"Tool '{tool.name}' should not need to execute processes. "
+                                "This may indicate hidden functionality."
                             ),
                             reference=None,
-                            confidence=0.6,
-                        ))
+                        )
+                    )
+                    break
+
+            # Check for network access in non-network tools
+            tool_name_lower = tool.name.lower()
+            if not any(
+                kw in tool_name_lower
+                for kw in ("api", "fetch", "http", "web", "url", "search", "weather")
+            ):
+                for pat in self._network_patterns:
+                    m = pat.search(handler_content)
+                    if m:
+                        findings.append(
+                            Finding(
+                                rule_id=self.rule_id,
+                                title=f"Scope escalation: network access in '{tool.name}'",
+                        description=(
+                            f"Tool '{tool.name}' makes network requests beyond its stated purpose"
+                        ),
+                                severity=Severity.MEDIUM,
+                                category=FindingCategory.SCOPE_ESCALATION,
+                                file_path=tool.handler_file or server.path,
+                                line_number=None,
+                                matched_content=m.group(0)[:200],
+                                remediation=(
+                                    f"Tool '{tool.name}' should not need network access. "
+                                    "Review whether outbound connections are justified."
+                                ),
+                                reference=None,
+                                confidence=0.6,
+                            )
+                        )
                         break
 
         return findings

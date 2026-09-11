@@ -6,7 +6,6 @@ from pathlib import Path
 from waingro.models import Finding, FindingCategory, ParsedSkill, Severity
 from waingro.rules import Rule, register_rule, search_skill_content
 
-
 # A skill touching its own workspace is doing its job. The Bitdefender pattern
 # is reading that data and sending it somewhere. Without a destination in the
 # same file, a path match is a description, not an exfiltration.

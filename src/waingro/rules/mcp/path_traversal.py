@@ -22,12 +22,12 @@ class PathTraversal(MCPRule):
         re.compile(r"path\.join\s*\(\s*\w+\s*,\s*(?:req|args|params|input|arguments)\b"),
         re.compile(r"path\.resolve\s*\(\s*\w+\s*,\s*(?:req|args|params|input|arguments)\b"),
         re.compile(r"os\.path\.join\s*\(\s*\w+\s*,\s*(?:req|args|params|input|arguments)\b"),
-
         # readdir/stat with user-controlled paths
         re.compile(r"(?:readdir|stat|lstat|access|mkdir)\s*\(\s*(?:args|params|input|arguments)"),
-
         # readFile/writeFile with user-controlled paths (no validation)
-        re.compile(r"(?:readFile|writeFile|readFileSync|writeFileSync|unlink)\s*\(\s*(?:args|params|input|arguments)"),
+        re.compile(
+            r"(?:readFile|writeFile|readFileSync|writeFileSync|unlink)\s*\(\s*(?:args|params|input|arguments)"
+        ),
         re.compile(r"open\s*\(\s*(?:args|params|input|arguments)"),
     ]
 
@@ -54,23 +54,28 @@ class PathTraversal(MCPRule):
 
             confidence = 0.5 if has_sanitization else 0.8
 
-            findings.append(Finding(
-                rule_id=self.rule_id,
-                title=self.title,
-                description=self.description,
-                severity=Severity.HIGH,
-                category=FindingCategory.EXECUTION,
-                file_path=fpath,
-                line_number=line,
-                matched_content=matched[:200],
-                remediation=(
-                    "Validate and sanitize all file paths from user input. "
-                    "Use realpath() + startsWith() to enforce directory boundaries. "
-                    "Reject paths containing '..' components."
-                ),
-                reference="Adversa #10; 82% of file-handling MCP servers vulnerable; CVE-2025-66689",
-                confidence=confidence,
-            ))
+            findings.append(
+                Finding(
+                    rule_id=self.rule_id,
+                    title=self.title,
+                    description=self.description,
+                    severity=Severity.HIGH,
+                    category=FindingCategory.EXECUTION,
+                    file_path=fpath,
+                    line_number=line,
+                    matched_content=matched[:200],
+                    remediation=(
+                        "Validate and sanitize all file paths from user input. "
+                        "Use realpath() + startsWith() to enforce directory boundaries. "
+                        "Reject paths containing '..' components."
+                    ),
+                    reference=(
+                        "Adversa #10; 82% of file-handling MCP servers vulnerable; "
+                        "CVE-2025-66689"
+                    ),
+                    confidence=confidence,
+                )
+            )
 
         return findings
 

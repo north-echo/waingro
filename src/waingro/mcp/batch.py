@@ -2,11 +2,16 @@
 
 import json
 import logging
+import re
 import shutil
+import signal
 import subprocess
+import threading
 import time
-from dataclasses import asdict, dataclass, field
+from contextlib import contextmanager
+from dataclasses import dataclass, field
 from pathlib import Path
+from urllib.parse import urlsplit
 
 from waingro.mcp.discovery import MCPServerEntry, load_manifest
 from waingro.mcp.models import Severity
@@ -16,6 +21,37 @@ logger = logging.getLogger(__name__)
 
 CLONE_TIMEOUT = 60  # seconds per clone
 SCAN_TIMEOUT = 120  # seconds per scan (enforced via alarm)
+
+
+class ScanTimedOutError(TimeoutError):
+    """Raised when one local MCP scan exceeds its wall-clock budget."""
+
+
+@contextmanager
+def _scan_deadline(seconds: int):
+    """Enforce a scan deadline where POSIX interval timers are available."""
+    supported = (
+        hasattr(signal, "setitimer") and threading.current_thread() is threading.main_thread()
+    )
+    if not supported:
+        yield
+        return
+
+    previous_handler = signal.getsignal(signal.SIGALRM)
+    previous_timer = signal.getitimer(signal.ITIMER_REAL)
+
+    def raise_timeout(_signum, _frame):
+        raise ScanTimedOutError(f"scan exceeded {seconds}s")
+
+    signal.signal(signal.SIGALRM, raise_timeout)
+    signal.setitimer(signal.ITIMER_REAL, seconds)
+    try:
+        yield
+    finally:
+        signal.setitimer(signal.ITIMER_REAL, 0)
+        signal.signal(signal.SIGALRM, previous_handler)
+        if previous_timer[0] > 0:
+            signal.setitimer(signal.ITIMER_REAL, *previous_timer)
 
 
 @dataclass
@@ -48,6 +84,7 @@ class ServerScanSummary:
     findings: list[dict] = field(default_factory=list)
     error: str | None = None
     scan_duration_ms: int = 0
+    cloned: bool = False
 
 
 @dataclass
@@ -63,26 +100,61 @@ class BatchResult:
     servers: list[ServerScanSummary] = field(default_factory=list)
 
 
+def _normalize_github_repo_url(url: str) -> str | None:
+    """Return a canonical HTTPS GitHub repository URL, or reject the input."""
+    candidate = url.removeprefix("git+")
+    parsed = urlsplit(candidate)
+    try:
+        port = parsed.port
+    except ValueError:
+        return None
+    if (
+        parsed.scheme != "https"
+        or parsed.hostname not in {"github.com", "www.github.com"}
+        or parsed.username is not None
+        or parsed.password is not None
+        or port not in (None, 443)
+        or parsed.query
+        or parsed.fragment
+    ):
+        return None
+    parts = [part for part in parsed.path.split("/") if part]
+    if len(parts) != 2:
+        return None
+    owner, repo = parts
+    repo = repo.removesuffix(".git")
+    allowed = re.compile(r"^[A-Za-z0-9_.-]+$")
+    if not owner or not repo or not allowed.fullmatch(owner) or not allowed.fullmatch(repo):
+        return None
+    return f"https://github.com/{owner}/{repo}.git"
+
+
 def _clone_repo(url: str, dest: Path) -> bool:
     """Shallow clone a GitHub repo. Returns True on success."""
     if dest.exists():
-        return True
+        return (dest / ".git").is_dir()
 
-    # Normalize URL to .git
-    git_url = url.rstrip("/")
-    if not git_url.endswith(".git"):
-        git_url += ".git"
+    git_url = _normalize_github_repo_url(url)
+    git = shutil.which("git")
+    if not git_url or not git:
+        return False
 
     try:
-        subprocess.run(
-            ["git", "clone", "--depth", "1", "--single-branch", "--quiet", git_url, str(dest)],
+        completed = subprocess.run(  # noqa: S603 -- fixed executable and validated URL
+            [git, "clone", "--depth", "1", "--single-branch", "--quiet", git_url, str(dest)],
             timeout=CLONE_TIMEOUT,
             capture_output=True,
             text=True,
+            check=False,
         )
-        return dest.exists()
+        succeeded = completed.returncode == 0 and (dest / ".git").is_dir()
+        if not succeeded and dest.exists():
+            shutil.rmtree(dest, ignore_errors=True)
+        return succeeded
     except (subprocess.TimeoutExpired, subprocess.SubprocessError) as e:
         logger.debug("Clone failed for %s: %s", url, e)
+        if dest.exists():
+            shutil.rmtree(dest, ignore_errors=True)
         return False
 
 
@@ -135,11 +207,11 @@ def run_batch_scan(config: BatchConfig) -> BatchResult:
 
     # Filter
     if config.github_only:
-        entries = [e for e in entries if e.url and "github.com" in e.url]
+        entries = [e for e in entries if e.url and _normalize_github_repo_url(e.url)]
     if config.min_stars > 0:
         entries = [e for e in entries if (e.stars or 0) >= config.min_stars]
     if config.max_servers > 0:
-        entries = entries[:config.max_servers]
+        entries = entries[: config.max_servers]
 
     print(f"Batch scan: {len(entries)} servers selected from {total_discovered} discovered")
 
@@ -153,7 +225,7 @@ def run_batch_scan(config: BatchConfig) -> BatchResult:
 
     for i, entry in enumerate(entries):
         pct = (i + 1) / len(entries) * 100
-        print(f"[{i+1}/{len(entries)} {pct:.0f}%] {entry.name}...", end=" ", flush=True)
+        print(f"[{i + 1}/{len(entries)} {pct:.0f}%] {entry.name}...", end=" ", flush=True)
 
         summary = _scan_entry(entry, config)
         result.servers.append(summary)
@@ -170,9 +242,12 @@ def run_batch_scan(config: BatchConfig) -> BatchResult:
             result.verdict_counts[v] = result.verdict_counts.get(v, 0) + 1
 
             # Track severities
-            result.severity_counts["critical"] = result.severity_counts.get("critical", 0) + summary.critical_count
-            result.severity_counts["high"] = result.severity_counts.get("high", 0) + summary.high_count
-            result.severity_counts["medium"] = result.severity_counts.get("medium", 0) + summary.medium_count
+            for severity, count in (
+                ("critical", summary.critical_count),
+                ("high", summary.high_count),
+                ("medium", summary.medium_count),
+            ):
+                result.severity_counts[severity] = result.severity_counts.get(severity, 0) + count
 
             # Track rule hits
             for f in summary.findings:
@@ -181,13 +256,13 @@ def run_batch_scan(config: BatchConfig) -> BatchResult:
 
             verdict_str = summary.verdict
             if summary.finding_count > 0:
-                print(f"{verdict_str} ({summary.finding_count} findings, {summary.tools_found} tools)")
+                print(
+                    f"{verdict_str} ({summary.finding_count} findings, {summary.tools_found} tools)"
+                )
             else:
                 print(f"{verdict_str}")
 
-        if summary.error and summary.error == "clone_failed":
-            pass  # Don't count as cloned
-        else:
+        if summary.cloned:
             result.total_cloned += 1
 
     # Save results
@@ -199,28 +274,47 @@ def run_batch_scan(config: BatchConfig) -> BatchResult:
 
 def _scan_entry(entry: MCPServerEntry, config: BatchConfig) -> ServerScanSummary:
     """Clone and scan a single entry."""
-    if not entry.url or "github.com" not in entry.url:
+    if not entry.url or not _normalize_github_repo_url(entry.url):
         return ServerScanSummary(
-            name=entry.name, url=entry.url, source=entry.source,
-            stars=entry.stars, language=entry.language,
-            verdict="SKIPPED", files_scanned=0, tools_found=0,
-            rules_evaluated=0, finding_count=0, critical_count=0,
-            high_count=0, medium_count=0, error="no_github_url",
+            name=entry.name,
+            url=entry.url,
+            source=entry.source,
+            stars=entry.stars,
+            language=entry.language,
+            verdict="SKIPPED",
+            files_scanned=0,
+            tools_found=0,
+            rules_evaluated=0,
+            finding_count=0,
+            critical_count=0,
+            high_count=0,
+            medium_count=0,
+            error="no_github_url",
         )
 
     dirname = _url_to_dirname(entry.url)
     clone_path = config.clone_dir / dirname
+    clone_existed = clone_path.exists()
 
-    # Clone
-    if not clone_path.exists():
-        if not _clone_repo(entry.url, clone_path):
-            return ServerScanSummary(
-                name=entry.name, url=entry.url, source=entry.source,
-                stars=entry.stars, language=entry.language,
-                verdict="SKIPPED", files_scanned=0, tools_found=0,
-                rules_evaluated=0, finding_count=0, critical_count=0,
-                high_count=0, medium_count=0, error="clone_failed",
-            )
+    # Validate an existing checkout or create a fresh one. Never treat an
+    # arbitrary pre-existing directory as a successful clone.
+    if not _clone_repo(entry.url, clone_path):
+        return ServerScanSummary(
+            name=entry.name,
+            url=entry.url,
+            source=entry.source,
+            stars=entry.stars,
+            language=entry.language,
+            verdict="SKIPPED",
+            files_scanned=0,
+            tools_found=0,
+            rules_evaluated=0,
+            finding_count=0,
+            critical_count=0,
+            high_count=0,
+            medium_count=0,
+            error="clone_failed",
+        )
 
     # Find scannable directory
     scan_path = _find_scannable_dir(clone_path)
@@ -228,40 +322,72 @@ def _scan_entry(entry: MCPServerEntry, config: BatchConfig) -> ServerScanSummary
     # Scan
     t0 = time.monotonic()
     try:
-        scan_result = scan_server(scan_path)
+        with _scan_deadline(SCAN_TIMEOUT):
+            scan_result = scan_server(scan_path)
+    except ScanTimedOutError:
+        return ServerScanSummary(
+            name=entry.name,
+            url=entry.url,
+            source=entry.source,
+            stars=entry.stars,
+            language=entry.language,
+            verdict="ERROR",
+            files_scanned=0,
+            tools_found=0,
+            rules_evaluated=0,
+            finding_count=0,
+            critical_count=0,
+            high_count=0,
+            medium_count=0,
+            error="scan_timeout",
+            cloned=True,
+        )
     except Exception as e:
         return ServerScanSummary(
-            name=entry.name, url=entry.url, source=entry.source,
-            stars=entry.stars, language=entry.language,
-            verdict="ERROR", files_scanned=0, tools_found=0,
-            rules_evaluated=0, finding_count=0, critical_count=0,
-            high_count=0, medium_count=0,
+            name=entry.name,
+            url=entry.url,
+            source=entry.source,
+            stars=entry.stars,
+            language=entry.language,
+            verdict="ERROR",
+            files_scanned=0,
+            tools_found=0,
+            rules_evaluated=0,
+            finding_count=0,
+            critical_count=0,
+            high_count=0,
+            medium_count=0,
             error=f"scan_error: {type(e).__name__}: {str(e)[:200]}",
+            cloned=True,
         )
     duration_ms = int((time.monotonic() - t0) * 1000)
 
     # Build findings list
     findings_data = []
     for f in scan_result.findings:
-        findings_data.append({
-            "rule_id": f.rule_id,
-            "title": f.title,
-            "severity": f.severity.value,
-            "category": f.category.value,
-            "file": str(f.file_path),
-            "line": f.line_number,
-            "matched": f.matched_content[:200],
-            "confidence": f.confidence,
-            "context_note": f.context_note,
-            "reference": f.reference,
-        })
+        findings_data.append(
+            {
+                "rule_id": f.rule_id,
+                "title": f.title,
+                "severity": f.severity.value,
+                "category": f.category.value,
+                "file": str(f.file_path),
+                "line": f.line_number,
+                "matched": f.matched_content[:200],
+                "confidence": f.confidence,
+                "context_note": f.context_note,
+                "reference": f.reference,
+            }
+        )
 
     critical = sum(1 for f in scan_result.findings if f.severity == Severity.CRITICAL)
     high = sum(1 for f in scan_result.findings if f.severity == Severity.HIGH)
     medium = sum(1 for f in scan_result.findings if f.severity == Severity.MEDIUM)
 
     # Cleanup if configured
-    if config.cleanup_after_scan and clone_path.exists():
+    # Only remove a checkout created by this invocation. A caller may point the
+    # batch scanner at a cache or a manually maintained working tree.
+    if config.cleanup_after_scan and not clone_existed and clone_path.exists():
         shutil.rmtree(clone_path, ignore_errors=True)
 
     return ServerScanSummary(
@@ -280,6 +406,7 @@ def _scan_entry(entry: MCPServerEntry, config: BatchConfig) -> ServerScanSummary
         medium_count=medium,
         findings=findings_data,
         scan_duration_ms=duration_ms,
+        cloned=True,
     )
 
 
@@ -316,6 +443,7 @@ def _save_results(result: BatchResult, path: Path):
                 "findings": s.findings,
                 "error": s.error,
                 "scan_duration_ms": s.scan_duration_ms,
+                "cloned": s.cloned,
             }
             for s in result.servers
         ],
@@ -327,9 +455,9 @@ def _save_results(result: BatchResult, path: Path):
 
 def _print_summary(result: BatchResult):
     """Print batch scan summary to console."""
-    print(f"\n{'='*60}")
-    print(f"WAINGRO-MCP Batch Scan Summary")
-    print(f"{'='*60}")
+    print(f"\n{'=' * 60}")
+    print("WAINGRO-MCP Batch Scan Summary")
+    print(f"{'=' * 60}")
     print(f"Discovered:  {result.total_discovered}")
     print(f"Cloned:      {result.total_cloned}")
     print(f"Scanned:     {result.total_scanned}")

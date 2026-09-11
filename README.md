@@ -29,8 +29,13 @@ waingro scan ./some-skill/
 # Scan with JSON output for CI/CD
 waingro scan ./some-skill/ --format json --fail-on high
 
+# Write either console or JSON output to a file
+waingro scan ./some-skill/ --output report.txt
+waingro scan ./some-skill/ --format json --output report.json
+
 # Audit all installed skills
 waingro audit ~/skills/
+waingro audit ~/skills/ --format json --output audit.json
 
 # Add semantic analysis for skills static rules cannot resolve
 waingro scan ./some-skill/ --semantic
@@ -62,6 +67,18 @@ waingro mcp discover --awesome awesome-mcp-servers/README.md -o manifest.json
 waingro mcp batch manifest.json --results results.json --cleanup
 ```
 
+### Input and batch safety
+
+- A skill scan accepts a skill directory containing `SKILL.md` or a `SKILL.md`
+  file directly. Missing manifests and unrelated files are rejected.
+- Bundled files are scanned with their paths preserved in JSON reports. Symlinks
+  that resolve outside the skill or MCP server root are not followed.
+- MCP batch cloning accepts canonical HTTPS GitHub repository URLs only. Clone
+  failures and scan timeouts are recorded per server so one bad entry does not
+  abort the batch.
+- `--cleanup` removes repositories cloned by the current batch invocation. It
+  does not remove repositories that were already present in the clone directory.
+
 ## Detection Coverage
 
 ### OpenClaw Rules (31 rules)
@@ -89,7 +106,7 @@ waingro mcp batch manifest.json --results results.json --cleanup
 | NET-002 | Network | CRITICAL | Known malicious infrastructure | Bitdefender |
 | NET-003 | Network | HIGH | Tunnel/proxy setup | — |
 | NET-004 | Network | CRITICAL | DNS data exfiltration | — |
-| OBFUSC-001 | Obfuscation | LOW–CRITICAL | Base64 blobs, graded by decode/exec sink | — |
+| OBFUSC-001 | Obfuscation | CRITICAL | Base64 literal decoded into an execution sink | — |
 | OBFUSC-002 | Obfuscation | MEDIUM | String concatenation tricks | — |
 | OBFUSC-003 | Obfuscation | HIGH | Machine-obfuscated bundled code | — |
 | INJECT-001 | Injection | HIGH | Prompt injection patterns | — |
@@ -128,9 +145,16 @@ Mapped to [OWASP MCP Top 10](https://owasp.org/www-project-mcp-top-10/) and [Adv
 Findings are graded and aggregated rather than counted per matching line.
 
 - Encoded content is decoded before it is reported. A blob that is not valid
-  base64, or that decodes to an image, font or hash, is not a finding.
-- Severity follows the sink on the same line. Decoded and executed outranks
-  decoded, which outranks a blob nobody touches.
+  base64, or that decodes to an image, font or non-text bytes, is not a finding.
+- Decode rules require a lexical path from the decoded value to an execution
+  sink, either by direct nesting or an exact assigned-name use in the same
+  function. Bare decode calls are not findings. Generated, vendored, lock, and
+  minified files are excluded from this correlation because a one-line bundle
+  cannot establish intent.
+- PowerShell cradle findings require downloaded content to reach
+  `Invoke-Expression`; mentioning the cmdlet is not enough.
+- npm lifecycle findings come from parsed `preinstall`, `postinstall`, or
+  `prepare` scripts whose command actually fetches content or starts a process.
 - Repeats collapse. Many hits of one rule in one file become one finding with
   an occurrence count; a rule firing across four or more files becomes one
   skill-level finding. Nothing is discarded, and severity carries the maximum
@@ -143,8 +167,12 @@ Findings are graded and aggregated rather than counted per matching line.
 - An unrecognised package name is informational. It becomes HIGH only when it
   is one or two edits from a popular package, or claims platform affiliation.
 
-Rule severities are therefore ranges, not constants. `--min-severity` filters
-what you see without changing what was found.
+Rule severities are therefore ranges, not constants. `--severity` filters what
+you see without changing the underlying verdict or `--fail-on` exit behavior.
+
+The decode-to-execution correlation is intentionally conservative lexical
+analysis, not an interprocedural taint engine. Complex aliases, returned values,
+callbacks, and cross-function flows may require semantic or manual review.
 
 ## Research
 

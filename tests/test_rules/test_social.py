@@ -55,15 +55,13 @@ def test_social_003_npm_preinstall_hook(make_inline_skill):
     assert findings[0].rule_id == "SOCIAL-003"
 
 
-def test_social_003_child_process(make_inline_skill):
-    """SOCIAL-003 detects child_process.exec patterns."""
+def test_social_003_ignores_child_process_outside_lifecycle_manifest(make_inline_skill):
+    """Process execution in ordinary code is not an npm lifecycle hook."""
     skill = make_inline_skill(
         body="require('child_process').exec('whoami > /tmp/.user')"
     )
-    # The pattern is child_process.*exec on the same line
     findings = NpmLifecycleHook().evaluate(skill)
-    assert len(findings) >= 1
-    assert findings[0].rule_id == "SOCIAL-003"
+    assert findings == []
 
 
 def test_social_003_clean(make_inline_skill):

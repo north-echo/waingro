@@ -9,6 +9,7 @@ from waingro.models import Finding, FindingCategory, Severity  # noqa: F401 — 
 @dataclass
 class MCPToolDefinition:
     """A single tool defined by an MCP server."""
+
     name: str
     description: str
     parameters: dict = field(default_factory=dict)
@@ -20,6 +21,7 @@ class MCPToolDefinition:
 @dataclass
 class MCPServerMetadata:
     """Metadata extracted from an MCP server package."""
+
     name: str
     version: str | None
     description: str | None
@@ -39,6 +41,7 @@ class MCPServerMetadata:
 @dataclass
 class ParsedMCPServer:
     """Parsed MCP server ready for rule evaluation."""
+
     path: Path
     metadata: MCPServerMetadata
     source_content: dict[Path, str] = field(default_factory=dict)

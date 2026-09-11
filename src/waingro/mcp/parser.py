@@ -11,9 +11,25 @@ SOURCE_EXTENSIONS = {".ts", ".js", ".mjs", ".cjs", ".py", ".sh"}
 SKIP_PATTERNS = {".min.js", ".min.cjs", ".bundle.js", ".chunk.js"}
 SKIP_NAMES = {"package-lock.json", "yarn.lock", "pnpm-lock.yaml"}
 IGNORE_DIRS = {
-    "node_modules", ".git", "dist", "build", "__pycache__", ".tox", ".venv", "venv",
-    ".next", ".nuxt", "out", "coverage", ".nyc_output", ".cache", ".turbo",
-    "vendor", "third_party", "external", "bundled",
+    "node_modules",
+    ".git",
+    "dist",
+    "build",
+    "__pycache__",
+    ".tox",
+    ".venv",
+    "venv",
+    ".next",
+    ".nuxt",
+    "out",
+    "coverage",
+    ".nyc_output",
+    ".cache",
+    ".turbo",
+    "vendor",
+    "third_party",
+    "external",
+    "bundled",
 }
 MAX_FILE_SIZE = 512 * 1024  # 512KB per file
 
@@ -21,6 +37,8 @@ MAX_FILE_SIZE = 512 * 1024  # 512KB per file
 def parse_mcp_server(path: Path) -> ParsedMCPServer:
     """Parse an MCP server directory into a ParsedMCPServer."""
     path = path.resolve()
+    if not path.is_dir():
+        raise NotADirectoryError(f"MCP server path is not a directory: {path}")
     metadata = _extract_metadata(path)
     source_content = _read_source_files(path)
     tool_defs_raw = _extract_tool_definitions_raw(source_content)
@@ -62,9 +80,26 @@ def _parse_package_json(pkg_json: Path) -> MCPServerMetadata:
     """Parse npm package.json."""
     try:
         data = json.loads(pkg_json.read_text(encoding="utf-8"))
-    except (json.JSONDecodeError, UnicodeDecodeError):
-        return MCPServerMetadata(name=pkg_json.parent.name, version=None, description=None,
-                                 author=None, license=None, repository=None, transport=None)
+    except (json.JSONDecodeError, OSError, UnicodeDecodeError):
+        return MCPServerMetadata(
+            name=pkg_json.parent.name,
+            version=None,
+            description=None,
+            author=None,
+            license=None,
+            repository=None,
+            transport=None,
+        )
+    if not isinstance(data, dict):
+        return MCPServerMetadata(
+            name=pkg_json.parent.name,
+            version=None,
+            description=None,
+            author=None,
+            license=None,
+            repository=None,
+            transport=None,
+        )
 
     repo = data.get("repository", "")
     if isinstance(repo, dict):
@@ -77,16 +112,24 @@ def _parse_package_json(pkg_json: Path) -> MCPServerMetadata:
     # Detect transport from dependencies/keywords
     transport = _detect_transport(data)
 
+    dependencies = data.get("dependencies")
+    dev_dependencies = data.get("devDependencies")
+    scripts = data.get("scripts")
+    name = data.get("name")
+
     return MCPServerMetadata(
-        name=data.get("name", pkg_json.parent.name),
-        version=data.get("version"),
-        description=data.get("description"),
-        author=author,
-        license=data.get("license"),
-        repository=repo,
+        name=name if isinstance(name, str) and name else pkg_json.parent.name,
+        version=data.get("version") if isinstance(data.get("version"), str) else None,
+        description=(data.get("description") if isinstance(data.get("description"), str) else None),
+        author=author if isinstance(author, str) else None,
+        license=data.get("license") if isinstance(data.get("license"), str) else None,
+        repository=repo if isinstance(repo, str) else None,
         transport=transport,
-        dependencies={**data.get("dependencies", {}), **data.get("devDependencies", {})},
-        scripts=data.get("scripts", {}),
+        dependencies={
+            **(dependencies if isinstance(dependencies, dict) else {}),
+            **(dev_dependencies if isinstance(dev_dependencies, dict) else {}),
+        },
+        scripts=scripts if isinstance(scripts, dict) else {},
         raw_manifest=data,
     )
 
@@ -117,8 +160,6 @@ def _toml_value(content: str, key: str) -> str | None:
 
 def _detect_transport(pkg_data: dict) -> str | None:
     """Detect MCP transport type from package metadata."""
-    all_deps = {**pkg_data.get("dependencies", {}), **pkg_data.get("devDependencies", {})}
-    keywords = pkg_data.get("keywords", [])
     all_text = json.dumps(pkg_data).lower()
 
     if "sse" in all_text or "server-sent-events" in all_text:
@@ -154,7 +195,8 @@ def _read_source_files(path: Path) -> dict[Path, str]:
 def _iter_source_files(path: Path):
     """Iterate over source files, skipping ignored directories and data files."""
     for child in sorted(path.rglob("*")):
-        if any(ignored in child.parts for ignored in IGNORE_DIRS):
+        relative = child.relative_to(path)
+        if any(part in IGNORE_DIRS for part in relative.parts):
             continue
         if not child.is_file():
             continue
@@ -165,7 +207,11 @@ def _iter_source_files(path: Path):
         if any(child.name.endswith(pat) for pat in SKIP_PATTERNS):
             continue
         # Skip files in hidden directories (e.g. .beads/, .github/)
-        if any(part.startswith(".") and part != "." for part in child.relative_to(path).parts[:-1]):
+        if any(part.startswith(".") and part != "." for part in relative.parts[:-1]):
+            continue
+        try:
+            child.resolve().relative_to(path)
+        except ValueError:
             continue
         if child.stat().st_size <= MAX_FILE_SIZE:
             yield child
@@ -195,7 +241,7 @@ def _extract_tool_definitions_raw(source_content: dict[Path, str]) -> str:
         r"@server\.list_tools)",
         re.IGNORECASE,
     )
-    for fpath, content in source_content.items():
+    for _fpath, content in source_content.items():
         for m in tool_def_re.finditer(content):
             start = max(0, m.start() - 100)
             end = min(len(content), m.end() + 2000)
@@ -204,7 +250,8 @@ def _extract_tool_definitions_raw(source_content: dict[Path, str]) -> str:
 
 
 def _extract_tools_from_source(
-    source_content: dict[Path, str], server_path: Path,
+    source_content: dict[Path, str],
+    server_path: Path,
 ) -> list[MCPToolDefinition]:
     """Extract tool definitions from source code patterns."""
     tools = []
@@ -234,17 +281,19 @@ def _extract_tools_from_source(
                 if name and name not in seen_names:
                     seen_names.add(name)
                     # Get handler content (lines around the definition)
-                    line_start = content[:m.start()].count("\n")
+                    line_start = content[: m.start()].count("\n")
                     lines = content.split("\n")
                     handler_start = max(0, line_start - 5)
                     handler_end = min(len(lines), line_start + 100)
                     handler_content = "\n".join(lines[handler_start:handler_end])
 
-                    tools.append(MCPToolDefinition(
-                        name=name,
-                        description=desc or "",
-                        handler_file=fpath,
-                        handler_content=handler_content,
-                    ))
+                    tools.append(
+                        MCPToolDefinition(
+                            name=name,
+                            description=desc or "",
+                            handler_file=fpath,
+                            handler_content=handler_content,
+                        )
+                    )
 
     return tools

@@ -15,25 +15,27 @@ from waingro.analyzers.context import (
 from waingro.analyzers.risk_profile import compute_risk_profile
 from waingro.analyzers.static import run_static_analysis
 from waingro.analyzers.typosquat import check_typosquat, load_known_good_skills
-from waingro.models import BundledFileContent, ScanResult
+from waingro.models import BundledFileContent, ParsedSkill, ScanResult
 from waingro.parsers.script import read_script
 from waingro.parsers.skill import parse_skill
 
 DEFAULT_KNOWN_GOOD = (
-    Path(__file__).parent.parent.parent / "tests" / "fixtures" / "known_good_skills.txt"
+    Path(__file__).parent / "data" / "known_skills.txt"
 )
+
+
+def load_skill(path: Path) -> ParsedSkill:
+    """Parse a skill and load the contents of its bundled files."""
+    skill = parse_skill(path)
+    for bf in skill.bundled_files:
+        content = read_script(bf)
+        skill.bundled_content.append(BundledFileContent(path=bf, content=content))
+    return skill
 
 
 def scan_skill(path: Path, known_good_path: Path | None = None) -> ScanResult:
     """Scan a single skill directory or SKILL.md file."""
-    skill = parse_skill(path)
-
-    # Read bundled files and make content available for analysis
-    files_scanned = 1  # SKILL.md
-    for bf in skill.bundled_files:
-        content = read_script(bf)
-        skill.bundled_content.append(BundledFileContent(path=bf, content=content))
-        files_scanned += 1
+    skill = load_skill(path)
 
     # Static analysis
     findings, rules_evaluated = run_static_analysis(skill)
@@ -63,7 +65,7 @@ def scan_skill(path: Path, known_good_path: Path | None = None) -> ScanResult:
         skill_path=skill.path,
         metadata=skill.metadata,
         findings=findings,
-        files_scanned=files_scanned,
+        files_scanned=1 + len(skill.bundled_content),
         rules_evaluated=rules_evaluated,
         security_tool_score=security_tool_score,
         risk_profile=profile.to_dict(),

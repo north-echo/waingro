@@ -33,7 +33,13 @@ def test_exec_005_in_bundled_only(make_inline_skill):
     """EXEC-005 fires on hex decode in a bundled script, clean body."""
     skill = make_inline_skill(
         body="Nothing suspicious here.",
-        bundled={"scripts/diag.py": "import subprocess\ncmd = bytes.fromhex('68656c6c6f')"},
+        bundled={
+            "scripts/diag.py": (
+                "import subprocess\n"
+                "cmd = bytes.fromhex('68656c6c6f')\n"
+                "subprocess.run(cmd, shell=True)\n"
+            )
+        },
     )
     findings = HexEncodedExecution().evaluate(skill)
     assert len(findings) >= 1

@@ -13,6 +13,17 @@ CODE_BLOCK_RE = re.compile(r"^```(\w*)\n(.*?)^```", re.MULTILINE | re.DOTALL)
 BUNDLED_EXTENSIONS = {".sh", ".py", ".js", ".json"}
 
 
+def _optional_text(value) -> str | None:
+    return value if isinstance(value, str) else None
+
+
+def _string_list(value) -> list[str]:
+    if isinstance(value, str):
+        return [value]
+    if not isinstance(value, list):
+        return []
+    return [item for item in value if isinstance(item, str)]
+
 
 def _read_text(path: Path) -> str:
     """Read a SKILL.md tolerantly.
@@ -25,6 +36,7 @@ def _read_text(path: Path) -> str:
     """
     return path.read_text(encoding="utf-8", errors="replace")
 
+
 def parse_frontmatter(content: str) -> tuple[dict, str]:
     """Extract YAML frontmatter and return (metadata_dict, body)."""
     match = FRONTMATTER_RE.match(content)
@@ -35,6 +47,8 @@ def parse_frontmatter(content: str) -> tuple[dict, str]:
     try:
         metadata = yaml.safe_load(raw_yaml) or {}
     except yaml.YAMLError:
+        metadata = {}
+    if not isinstance(metadata, dict):
         metadata = {}
     return metadata, body
 
@@ -60,11 +74,13 @@ def extract_code_blocks(content: str, start_line_offset: int = 0) -> list[dict]:
             block_lines = []
             block_start = i + 2 + start_line_offset  # first line after the fence
         elif in_block and line.startswith("```"):
-            blocks.append({
-                "language": block_lang,
-                "content": "\n".join(block_lines),
-                "line": block_start,
-            })
+            blocks.append(
+                {
+                    "language": block_lang,
+                    "content": "\n".join(block_lines),
+                    "line": block_start,
+                }
+            )
             in_block = False
         elif in_block:
             block_lines.append(line)
@@ -77,8 +93,16 @@ def discover_bundled_files(skill_dir: Path) -> list[Path]:
     files = []
     if not skill_dir.is_dir():
         return files
+    root = skill_dir.resolve()
     for ext in sorted(BUNDLED_EXTENSIONS):
-        files.extend(sorted(skill_dir.rglob(f"*{ext}")))
+        for path in sorted(skill_dir.rglob(f"*{ext}")):
+            if path.is_symlink() or not path.is_file():
+                continue
+            try:
+                path.resolve().relative_to(root)
+            except ValueError:
+                continue
+            files.append(path)
     return files
 
 
@@ -88,23 +112,29 @@ def parse_skill(path: Path) -> ParsedSkill:
         skill_md = path / "SKILL.md"
         skill_dir = path
     else:
+        if path.name != "SKILL.md":
+            raise ValueError(f"expected a skill directory or SKILL.md, got: {path}")
         skill_md = path
         skill_dir = path.parent
 
-    content = _read_text(skill_md) if skill_md.exists() else ""
+    if not skill_md.is_file():
+        raise FileNotFoundError(f"SKILL.md not found: {skill_md}")
+
+    content = _read_text(skill_md)
     raw_meta, body = parse_frontmatter(content)
 
     # Count frontmatter lines for offset
     fm_match = FRONTMATTER_RE.match(content)
     fm_lines = content[: fm_match.end()].count("\n") if fm_match else 0
 
+    raw_name = raw_meta.get("name")
     metadata = SkillMetadata(
-        name=raw_meta.get("name", skill_dir.name),
-        description=raw_meta.get("description"),
-        version=raw_meta.get("version"),
-        author=raw_meta.get("author"),
-        tags=raw_meta.get("tags", []),
-        tools=raw_meta.get("tools", []),
+        name=raw_name if isinstance(raw_name, str) and raw_name else skill_dir.name,
+        description=_optional_text(raw_meta.get("description")),
+        version=_optional_text(raw_meta.get("version")),
+        author=_optional_text(raw_meta.get("author")),
+        tags=_string_list(raw_meta.get("tags")),
+        tools=_string_list(raw_meta.get("tools")),
         raw_frontmatter=raw_meta,
     )
 
