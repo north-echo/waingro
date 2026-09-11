@@ -20,11 +20,15 @@ def test_classify_detection_heading():
     assert classify_heading("Threat Categories") == "detection"
     assert classify_heading("BLACKLIST_PATTERNS") == "detection"
     assert classify_heading("Instant Block") == "detection"
+    assert classify_heading("Security Guardrails — Vulnerability Patterns") == "detection"
+    assert classify_heading("Dangerous Examples (Always Ask)") == "detection"
 
 
 def test_classify_chinese_detection_heading():
     assert classify_heading("危险标志示例") == "detection"
     assert classify_heading("安全规则") == "detection"
+    assert classify_heading("安全特性") == "detection"
+    assert classify_heading("危险命令检测") == "detection"
 
 
 def test_classify_usage_heading():

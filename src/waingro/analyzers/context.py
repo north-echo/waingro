@@ -3,7 +3,7 @@
 import re
 
 from waingro.models import Finding, ParsedSkill
-from waingro.parsers.sections import find_section_for_line
+from waingro.parsers.sections import find_section_for_line, parse_sections
 
 SECURITY_KEYWORDS = [
     "scanner",
@@ -94,6 +94,23 @@ def _bundled_source_line(skill: ParsedSkill, finding: Finding) -> str | None:
     return None
 
 
+def _section_for_finding(skill: ParsedSkill, finding: Finding):
+    """Resolve Markdown section context from the file that produced a finding."""
+    if not finding.line_number:
+        return None
+    if finding.file_path.name.lower() == "skill.md":
+        return find_section_for_line(skill.sections, finding.line_number)
+    if finding.file_path.suffix.lower() not in {".md", ".txt"}:
+        return None
+    for bundled in skill.bundled_content:
+        if bundled.path == finding.file_path:
+            return find_section_for_line(
+                parse_sections(bundled.content),
+                finding.line_number,
+            )
+    return None
+
+
 def compute_security_tool_score(
     skill: ParsedSkill,
     findings: list[Finding],
@@ -140,12 +157,8 @@ def adjust_finding_confidence(
     skill: ParsedSkill | None = None,
 ) -> list[Finding]:
     """Reduce confidence on findings when the skill is likely a security tool."""
-    sections = skill.sections if skill else []
-
     for finding in findings:
-        section = None
-        if sections and finding.line_number:
-            section = find_section_for_line(sections, finding.line_number)
+        section = _section_for_finding(skill, finding) if skill else None
 
         relative_path = finding.file_path
         is_skill_relative = False
@@ -171,6 +184,7 @@ def adjust_finding_confidence(
             "tests",
             "spec",
             "specs",
+            "testing",
             "benchmark",
             "benchmarks",
             "eval",
