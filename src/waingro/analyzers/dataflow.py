@@ -510,6 +510,108 @@ def _assigns_name(clause: str, name: str) -> bool:
     return any(match.group(1) == name for match in _ASSIGNMENT_RE.finditer(clause))
 
 
+def statement_for_finding(
+    skill: ParsedSkill,
+    file_path: Path,
+    line_number: int | None,
+) -> str:
+    """Return the bounded logical statement containing a finding.
+
+    The result stays inside the Markdown fence or bundled source file selected
+    by ``line_number``. Shell continuation lines and parenthesized calls are
+    included, while unrelated neighboring examples are not.
+    """
+    content, line_base = _source_for_finding(skill, file_path, line_number)
+    if not content or is_generated_or_vendored(file_path, content):
+        return ""
+    lines = content.splitlines()
+    index = (line_number or line_base + 1) - line_base - 1
+    if not 0 <= index < len(lines):
+        return ""
+    start, end = _statement_bounds(lines, index)
+    return "\n".join(lines[start:end])
+
+
+def expression_reaches_sink(
+    skill: ParsedSkill,
+    file_path: Path,
+    line_number: int | None,
+    source_patterns: tuple[re.Pattern[str], ...],
+    sink_pattern: re.Pattern[str],
+    *,
+    max_aliases: int = 8,
+) -> bool:
+    """Whether a source reaches a later sink through exact-name assignments.
+
+    This is a deliberately small capability-flow primitive. It follows direct
+    nesting and a bounded chain of local aliases in one lexical function. It
+    does not infer callbacks, return values, properties, or cross-function
+    flows. Reassignment kills a tracked name, and generated/vendored files are
+    excluded because their lexical layout is not reliable evidence.
+    """
+    content, line_base = _source_for_finding(skill, file_path, line_number)
+    if not content or is_generated_or_vendored(file_path, content):
+        return False
+    if file_path.suffix.lower() == ".py":
+        content = _without_python_strings_and_comments(content)
+    elif file_path.suffix.lower() in {".cjs", ".js", ".mjs", ".ts"}:
+        content = _without_c_block_comments(content)
+    lines = content.splitlines()
+    index = (line_number or line_base + 1) - line_base - 1
+    if not 0 <= index < len(lines):
+        return False
+
+    stmt_start, stmt_end = _statement_bounds(lines, index)
+    statement = "\n".join(lines[stmt_start:stmt_end])
+    clauses = _clauses(statement)
+
+    for clause in clauses:
+        if _source_is_inside_sink(clause, source_patterns, sink_pattern):
+            return True
+
+    source_name = _assigned_name(statement, source_patterns)
+    if not source_name:
+        return False
+
+    _scope_start, scope_end = _scope_bounds(lines, index, file_path)
+    tracked = {source_name}
+    source_clause_index = next(
+        (i for i, clause in enumerate(clauses) if _first_source_match(clause, source_patterns)),
+        len(clauses) - 1,
+    )
+    candidates = clauses[source_clause_index + 1 :]
+    candidates.extend(
+        clause for candidate in lines[stmt_end:scope_end] for clause in _clauses(candidate)
+    )
+
+    for clause in candidates:
+        previously_tracked = set(tracked)
+        assignment = next(iter(_ASSIGNMENT_RE.finditer(clause)), None)
+        value_text = clause[assignment.end() :] if assignment else clause
+        used_names = {
+            name
+            for name in previously_tracked
+            if _first_source_match(
+                value_text,
+                (_name_re(name),),
+                allow_shell_interpolation=True,
+            )
+        }
+        if used_names and _unquoted_matches(sink_pattern, clause):
+            return True
+
+        for name in previously_tracked:
+            if _assigns_name(clause, name) and name not in used_names:
+                tracked.remove(name)
+        if assignment and used_names and assignment.group(1) not in tracked:
+            if len(tracked) >= max_aliases:
+                return False
+            tracked.add(assignment.group(1))
+        if not tracked:
+            return False
+    return False
+
+
 def expression_reaches_execution(
     skill: ParsedSkill,
     file_path: Path,

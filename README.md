@@ -83,7 +83,7 @@ waingro mcp batch manifest.json --results results.json --cleanup
 
 ## Detection Coverage
 
-### OpenClaw Rules (31 rules)
+### OpenClaw Rules (34 rules)
 
 | Rule ID | Category | Severity | Description | Reference |
 |---------|----------|----------|-------------|-----------|
@@ -108,6 +108,9 @@ waingro mcp batch manifest.json --results results.json --cleanup
 | NET-002 | Network | CRITICAL | Known malicious infrastructure | Bitdefender |
 | NET-003 | Network | HIGH | Tunnel/proxy setup | — |
 | NET-004 | Network | CRITICAL | DNS data exfiltration | — |
+| NET-005 | Network | HIGH | Credential transmitted over plaintext transport | CWE-319 |
+| NET-006 | Network | MEDIUM | External plaintext WebSocket channel | CWE-319 |
+| NET-007 | Network | MEDIUM | Machine identity transmitted to a network sink | ATT&CK T1082 |
 | OBFUSC-001 | Obfuscation | CRITICAL | Base64 literal decoded into an execution sink | — |
 | OBFUSC-002 | Obfuscation | MEDIUM | String concatenation tricks | — |
 | OBFUSC-003 | Obfuscation | HIGH | Machine-obfuscated bundled code | — |
@@ -155,6 +158,14 @@ Findings are graded and aggregated rather than counted per matching line.
   cannot establish intent.
 - PowerShell cradle findings require downloaded content to reach
   `Invoke-Expression`; mentioning the cmdlet is not enough.
+- Cleartext credential findings require a public `http://` endpoint, an
+  outbound request, and a credential-bearing value in the same bounded logical
+  statement. Local and private-network endpoints are excluded.
+- Machine-identity findings follow hostname or network-interface values through
+  bounded exact-name assignments to a network send in the same lexical
+  function. Local use of a hostname is not a finding.
+- A remote `ws://` endpoint is reported as an exposed bidirectional transport,
+  not labeled command-and-control. Intent still requires human review.
 - npm lifecycle findings come from parsed `preinstall`, `postinstall`, or
   `prepare` scripts whose command actually fetches content or starts a process.
 - Repeats collapse. Many hits of one rule in one file become one finding with
@@ -176,6 +187,37 @@ The decode-to-execution correlation is intentionally conservative lexical
 analysis, not an interprocedural taint engine. Complex aliases, returned values,
 callbacks, and cross-function flows may require semantic or manual review.
 
+Scanner verdicts are triage labels, not ground truth. In particular, a
+`MALICIOUS` verdict means a high-confidence critical rule fired; it does not by
+itself establish that a publisher acted maliciously. Confirm intent and the
+complete behavior chain before making that claim.
+
+## Threat-intelligence model
+
+WAINGRO treats public intelligence in deliberately different ways:
+
+- [MITRE ATT&CK STIX](https://github.com/mitre-attack/attack-stix-data) supplies
+  stable behavior vocabulary and technique mappings. ATT&CK labels explain a
+  finding; they are not signatures by themselves.
+- [Atomic Red Team](https://github.com/redcanaryco/atomic-red-team) is a source
+  for non-executed positive fixtures in behavior-chain regression tests. Its
+  payloads must never be run as part of a scan.
+- [LOLBAS](https://lolbas-project.github.io/api/) and
+  [GTFOBins](https://github.com/GTFOBins/GTFOBins.github.io) identify execution
+  primitives only after a remote or sensitive value is proven to reach them.
+- [URLhaus](https://urlhaus.abuse.ch/api/) and
+  [ThreatFox](https://threatfox.abuse.ch/api/) are suitable for optional,
+  expiring IOC packs. Indicators need source, license, retrieval time, and
+  expiry metadata; stale indicators must not silently become permanent verdicts.
+- [Sigma](https://github.com/SigmaHQ/sigma) is useful as a defensive-signature
+  corpus and negative fixture source. A skill carrying a detection rule is not
+  evidence that it performs the behavior described by that rule.
+
+The intended detection unit is a capability chain—sensitive source or device
+identity, optional decode/staging, then network, execution, persistence, or
+exfiltration sink. Keyword co-presence is retained only as a review lead and is
+not promoted to an attack verdict.
+
 ## Research
 
 - [ClawHub Ecosystem Security Audit](research/clawhub-audit/) — March 2026 audit of 30,037 skills
@@ -187,6 +229,8 @@ callbacks, and cross-function flows may require semantic or manual review.
 - [Adversa AI MCP Security Top 25](https://adversa.ai/mcp-security-top-25-mcp-vulnerabilities/)
 - [Vulnerable MCP Project](https://vulnerablemcp.info/)
 - [Bitdefender Technical Advisory: OpenClaw Exploitation](https://businessinsights.bitdefender.com/technical-advisory-openclaw-exploitation-enterprise-networks)
+- [CWE-319: Cleartext Transmission of Sensitive Information](https://cwe.mitre.org/data/definitions/319.html)
+- [MITRE ATT&CK: System Information Discovery (T1082)](https://attack.mitre.org/techniques/T1082/)
 
 ## License
 
