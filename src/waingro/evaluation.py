@@ -6,6 +6,7 @@ from collections import Counter, defaultdict
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
+from tempfile import TemporaryDirectory
 
 from waingro.scanner import scan_skill
 
@@ -76,6 +77,9 @@ class BenchmarkRecord:
     category: str
     verdict: str
     rule_ids: list[str]
+    hybrid_verdict: str
+    review_score: float
+    review_priority: str
 
     def to_dict(self) -> dict:
         return {
@@ -83,6 +87,9 @@ class BenchmarkRecord:
             "label": self.label,
             "category": self.category,
             "verdict": self.verdict,
+            "hybrid_verdict": self.hybrid_verdict,
+            "review_score": round(self.review_score, 3),
+            "review_priority": self.review_priority,
             "rule_ids": self.rule_ids,
         }
 
@@ -112,6 +119,41 @@ class BenchmarkReport:
                 result.true_negative += 1
         return result
 
+    def ranking_metrics(self) -> dict:
+        """Measure whether known malicious cases rise to the review queue."""
+        ranked = sorted(self.records, key=lambda item: (-item.review_score, item.path))
+        positives = sum(record.label == "malicious" for record in ranked)
+        hits = 0
+        precision_sum = 0.0
+        for rank, record in enumerate(ranked, 1):
+            if record.label == "malicious":
+                hits += 1
+                precision_sum += hits / rank
+        average_precision = precision_sum / positives if positives else 0.0
+
+        cutoffs = sorted({min(value, len(ranked)) for value in (10, 25, 50, positives) if value})
+        at_k = {}
+        for cutoff in cutoffs:
+            retrieved = sum(
+                record.label == "malicious" for record in ranked[:cutoff]
+            )
+            at_k[str(cutoff)] = {
+                "true_positive": retrieved,
+                "false_positive": cutoff - retrieved,
+                "precision": round(retrieved / cutoff, 4),
+                "recall": round(retrieved / positives, 4) if positives else 0.0,
+            }
+        return {
+            "score": "intent-neutral review_score",
+            "tie_breaker": "path ascending",
+            "positives": positives,
+            "average_precision": round(average_precision, 4),
+            "recall_at_positive_count": (
+                at_k.get(str(positives), {}).get("recall", 0.0) if positives else 0.0
+            ),
+            "at_k": at_k,
+        }
+
     def to_dict(self) -> dict:
         verdicts: dict[str, Counter] = defaultdict(Counter)
         rule_hits: Counter = Counter()
@@ -139,7 +181,7 @@ class BenchmarkReport:
             }
 
         return {
-            "schema_version": "1.0",
+            "schema_version": "1.1",
             "dataset": self.dataset,
             "analysis_mode": self.analysis_mode,
             "cases": len(self.records),
@@ -150,6 +192,7 @@ class BenchmarkReport:
             "thresholds": {
                 threshold: self.metrics(threshold).to_dict() for threshold in PREDICATES
             },
+            "ranking": self.ranking_metrics(),
             "malicious_category_recall_at_suspicious": category_recall,
             "rule_hits": dict(sorted(rule_hits.items())),
             "records": [record.to_dict() for record in self.records],
@@ -157,21 +200,36 @@ class BenchmarkReport:
 
 
 def discover_benchmark_cases(dataset: Path) -> list[BenchmarkCase]:
-    """Discover ``benign/`` and ``malicious/`` skill directories."""
+    """Discover directory-form skills and flat Markdown benchmark cases."""
     cases: list[BenchmarkCase] = []
     for label in ("benign", "malicious"):
         label_dir = dataset / label
         if not label_dir.is_dir():
             raise ValueError(f"benchmark dataset is missing directory: {label_dir}")
         for path in sorted(label_dir.iterdir()):
-            if not path.is_dir() or not (path / "SKILL.md").is_file():
+            if path.is_dir() and (path / "SKILL.md").is_file():
+                parts = path.name.split("-", 2)
+                category = parts[1] if len(parts) == 3 else "unspecified"
+            elif path.is_file() and path.suffix.lower() == ".md":
+                parts = path.stem.split("_")
+                category = parts[2] if len(parts) >= 4 else "unspecified"
+            else:
                 continue
-            parts = path.name.split("-", 2)
-            category = parts[1] if len(parts) == 3 else "unspecified"
             cases.append(BenchmarkCase(path=path, label=label, category=category))
     if not cases:
-        raise ValueError(f"benchmark dataset contains no SKILL.md cases: {dataset}")
+        raise ValueError(f"benchmark dataset contains no skill cases: {dataset}")
     return cases
+
+
+def _scan_case(path: Path):
+    if path.is_dir() or path.name == "SKILL.md":
+        return scan_skill(path)
+    # Flat benchmark fixtures are adapted to the scanner's real manifest name
+    # in a private temporary directory. Their content is read, never executed.
+    with TemporaryDirectory(prefix="waingro-eval-") as temporary:
+        manifest = Path(temporary) / "SKILL.md"
+        manifest.write_bytes(path.read_bytes())
+        return scan_skill(manifest)
 
 
 def evaluate_dataset(dataset: Path, *, analysis_mode: str = "static") -> BenchmarkReport:
@@ -182,23 +240,27 @@ def evaluate_dataset(dataset: Path, *, analysis_mode: str = "static") -> Benchma
     report = BenchmarkReport(dataset=str(dataset), analysis_mode=analysis_mode)
     for case in discover_benchmark_cases(dataset):
         try:
-            result = scan_skill(case.path)
+            result = _scan_case(case.path)
         except (OSError, ValueError) as exc:
             report.errors.append(
                 {"path": str(case.path), "error": f"{type(exc).__name__}: {exc}"}
             )
             continue
-        verdict = result.verdict
-        if analysis_mode == "hybrid-static":
-            from waingro.analyzers.hybrid import assess_scan
+        from waingro.analyzers.hybrid import assess_scan
 
-            verdict = assess_scan(result).verdict.value
+        assessment = assess_scan(result)
+        verdict = (
+            assessment.verdict.value if analysis_mode == "hybrid-static" else result.verdict
+        )
         report.records.append(
             BenchmarkRecord(
                 path=str(case.path.relative_to(dataset)),
                 label=case.label,
                 category=case.category,
                 verdict=verdict,
+                hybrid_verdict=assessment.verdict.value,
+                review_score=assessment.review_score,
+                review_priority=assessment.review_priority,
                 rule_ids=sorted({finding.rule_id for finding in result.findings}),
             )
         )

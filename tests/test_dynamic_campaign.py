@@ -5,7 +5,16 @@ import json
 from waingro.dynamic.campaign import prepare_campaign_queue
 
 
-def _record(path, digest, *, confidence=0.95, rule="EXFIL-008", tool_score=0.1):
+def _record(
+    path,
+    digest,
+    *,
+    confidence=0.95,
+    rule="EXFIL-008",
+    tool_score=0.1,
+    review_score=None,
+    dynamic_priority="high",
+):
     return {
         "path": str(path),
         "publisher": path.parent.name,
@@ -13,10 +22,11 @@ def _record(path, digest, *, confidence=0.95, rule="EXFIL-008", tool_score=0.1):
         "artifact_sha256": digest,
         "static_verdict": "SUSPICIOUS",
         "hybrid_verdict": "SUSPICIOUS",
-        "dynamic_priority": "high",
+        "dynamic_priority": dynamic_priority,
         "security_tool_score": tool_score,
         "attack_paths": [{"confidence": confidence, "stages": ["data-access", "exfiltration"]}],
         "findings": [{"rule": rule, "severity": "high"}],
+        **({"review_score": review_score} if review_score is not None else {}),
     }
 
 
@@ -106,3 +116,26 @@ def test_campaign_queue_rejects_a_symlinked_candidate(tmp_path):
 
     assert report["counts"]["selected_for_manual_review"] == 0
     assert report["counts"]["excluded"]["unsafe-or-missing-path"] == 1
+
+
+def test_campaign_queue_accepts_ranked_mismatch_without_attack_path(tmp_path):
+    corpus = tmp_path / "corpus"
+    candidate = _candidate(corpus, "publisher", "mismatch")
+    record = _record(
+        candidate,
+        "a" * 64,
+        confidence=0,
+        rule="BEHAV-001",
+        review_score=0.82,
+        dynamic_priority="high",
+    )
+    record["hybrid_verdict"] = "CAPABILITY"
+    record["attack_paths"] = []
+    source = tmp_path / "scan.jsonl"
+    source.write_text(json.dumps(record) + "\n", encoding="utf-8")
+    output = tmp_path / "queue.json"
+
+    report = prepare_campaign_queue(source, corpus, output)
+
+    assert report["counts"]["selected_for_manual_review"] == 1
+    assert report["candidates"][0]["review_score"] == 0.82

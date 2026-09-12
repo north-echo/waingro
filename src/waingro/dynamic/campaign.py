@@ -93,7 +93,7 @@ def _behavior_fingerprint(record: dict) -> str:
     return hashlib.sha256(canonical).hexdigest()
 
 
-def _priority(record: dict) -> tuple[float, int, float, str]:
+def _priority(record: dict) -> tuple[float, float, int, float, str]:
     confidences = [
         float(item.get("confidence", 0))
         for item in record.get("attack_paths", [])
@@ -108,6 +108,9 @@ def _priority(record: dict) -> tuple[float, int, float, str]:
     if not isinstance(security_tool_score, (int, float)):
         security_tool_score = 0
     return (
+        float(record.get("review_score", 0))
+        if isinstance(record.get("review_score"), (int, float))
+        else 0.0,
         max(confidences, default=0),
         max(severities, default=0),
         -float(security_tool_score),
@@ -122,6 +125,7 @@ def prepare_campaign_queue(
     *,
     limit: int = 50,
     min_path_confidence: float = 0.95,
+    min_review_score: float = 0.35,
     per_behavior_limit: int = 3,
 ) -> dict:
     """Select review candidates; never import, install, or execute their files."""
@@ -131,6 +135,8 @@ def prepare_campaign_queue(
         raise CampaignPreparationError("per-behavior limit must be between 1 and 10")
     if not 0.5 <= min_path_confidence <= 1:
         raise CampaignPreparationError("minimum path confidence must be between 0.5 and 1.0")
+    if not 0.0 <= min_review_score <= 1:
+        raise CampaignPreparationError("minimum review score must be between 0.0 and 1.0")
     if output.exists():
         raise CampaignPreparationError("campaign queue output already exists")
     if input_jsonl.is_symlink() or not input_jsonl.is_file():
@@ -153,11 +159,20 @@ def prepare_campaign_queue(
                 raise CampaignPreparationError(f"invalid JSON on line {line_number}") from exc
             if not isinstance(record, dict):
                 raise CampaignPreparationError(f"line {line_number} is not an object")
-            if (
-                record.get("hybrid_verdict") != "SUSPICIOUS"
-                or record.get("dynamic_priority") != "high"
-            ):
-                excluded["not-high-priority-suspicious"] += 1
+            review_score = record.get("review_score")
+            has_review_score = isinstance(review_score, (int, float))
+            legacy_eligible = (
+                not has_review_score
+                and record.get("hybrid_verdict") == "SUSPICIOUS"
+                and record.get("dynamic_priority") == "high"
+            )
+            review_eligible = (
+                has_review_score
+                and float(review_score) >= min_review_score
+                and record.get("dynamic_priority") in {"high", "medium"}
+            )
+            if not (legacy_eligible or review_eligible):
+                excluded["below-review-priority"] += 1
                 continue
             digest = record.get("artifact_sha256")
             if (
@@ -191,8 +206,11 @@ def prepare_campaign_queue(
                 for item in record.get("attack_paths", [])
                 if isinstance(item, dict) and isinstance(item.get("confidence"), (int, float))
             ]
-            if max(confidences, default=0) < min_path_confidence:
-                excluded["below-path-confidence"] += 1
+            if (
+                max(confidences, default=0) < min_path_confidence
+                and not review_eligible
+            ):
+                excluded["below-path-or-review-threshold"] += 1
                 continue
             candidate = _safe_candidate_path(record.get("path"), corpus_root)
             if candidate is None:
@@ -209,7 +227,9 @@ def prepare_campaign_queue(
                 "path": str(candidate),
                 "artifact_sha256": digest,
                 "behavior_fingerprint": behavior,
-                "max_path_confidence": max(confidences),
+                "max_path_confidence": max(confidences, default=0.0),
+                "review_score": round(float(review_score), 3) if has_review_score else None,
+                "review_priority": record.get("review_priority", record.get("dynamic_priority")),
                 "security_tool_score": tool_score,
                 "rules": sorted({item.get("rule") for item in findings if item.get("rule")}),
                 "entrypoint_candidates": entrypoints,
@@ -243,7 +263,7 @@ def prepare_campaign_queue(
     if beyond_limit := max(0, len(eligible) - considered):
         excluded["eligible-beyond-limit"] += beyond_limit
     document = {
-        "schema_version": "1.0",
+        "schema_version": "1.1",
         "created_at": datetime.now(UTC).isoformat(),
         "input": str(input_jsonl.resolve()),
         "corpus_root": str(corpus_root.resolve()),
@@ -251,6 +271,7 @@ def prepare_campaign_queue(
         "policy": {
             "limit": limit,
             "minimum_path_confidence": min_path_confidence,
+            "minimum_review_score": min_review_score,
             "per_behavior_limit": per_behavior_limit,
             "possible_embedded_credentials_excluded": True,
             "security_tool_threshold": 0.3,

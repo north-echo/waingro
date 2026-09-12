@@ -7,9 +7,11 @@ execute a skill, and a high-priority queue item is not evidence of malware.
 
 1. Generate a maximum 50-item manual-review queue with `waingro dynamic
    prepare-campaign`. This command only reads scan results and candidate files.
-2. Exclude possible embedded credentials, probable defensive tools, duplicate
-   artifacts, repeated behavior families, candidates below the selected path
-   confidence, and candidates without an explicit runnable entrypoint.
+2. Rank candidates with the intent-neutral `review_score`, then exclude
+   possible embedded credentials, probable defensive tools, duplicate
+   artifacts, repeated behavior families, candidates below both the selected
+   path and review thresholds, and candidates without an explicit runnable
+   entrypoint. A high review score is not an intent verdict.
 3. Review every selected artifact manually. Record its declared purpose,
    provenance, exact entrypoint, arguments, required executables, expected
    events, negative control, and why runtime behavior is needed.

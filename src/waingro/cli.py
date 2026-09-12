@@ -222,6 +222,7 @@ def audit(
 @click.option("-o", "--output", type=click.Path(path_type=Path), default=None)
 @click.option("--fail-under-precision", type=click.FloatRange(0.0, 1.0), default=None)
 @click.option("--fail-under-recall", type=click.FloatRange(0.0, 1.0), default=None)
+@click.option("--fail-under-average-precision", type=click.FloatRange(0.0, 1.0), default=None)
 def benchmark(
     dataset: Path,
     threshold: str,
@@ -230,6 +231,7 @@ def benchmark(
     output: Path | None,
     fail_under_precision: float | None,
     fail_under_recall: float | None,
+    fail_under_average_precision: float | None,
 ) -> None:
     """Evaluate WAINGRO against DATASET/{benign,malicious} without executing it."""
     try:
@@ -263,6 +265,13 @@ def benchmark(
                 f"  {category:32s} {values['detected']:3d}/{values['total']:<3d} "
                 f"({values['recall']:.1%})"
             )
+        ranking = data["ranking"]
+        lines.extend((
+            "",
+            "Intent-neutral review ranking:",
+            f"  Average precision: {ranking['average_precision']:.1%}",
+            f"  Recall at positive-count cutoff: {ranking['recall_at_positive_count']:.1%}",
+        ))
         rendered = "\n".join(lines)
 
     if output:
@@ -279,6 +288,15 @@ def benchmark(
     if fail_under_recall is not None and selected.recall < fail_under_recall:
         raise click.ClickException(
             f"recall {selected.recall:.4f} is below {fail_under_recall:.4f}"
+        )
+    average_precision = data["ranking"]["average_precision"]
+    if (
+        fail_under_average_precision is not None
+        and average_precision < fail_under_average_precision
+    ):
+        raise click.ClickException(
+            f"average precision {average_precision:.4f} is below "
+            f"{fail_under_average_precision:.4f}"
         )
 
 
@@ -630,6 +648,12 @@ def dynamic_preflight(host_policy: Path, work_root: Path) -> None:
     show_default=True,
 )
 @click.option(
+    "--minimum-review-score",
+    type=click.FloatRange(0.0, 1.0),
+    default=0.35,
+    show_default=True,
+)
+@click.option(
     "--per-behavior-limit",
     type=click.IntRange(1, 10),
     default=3,
@@ -641,6 +665,7 @@ def dynamic_prepare_campaign(
     corpus_root: Path,
     limit: int,
     minimum_path_confidence: float,
+    minimum_review_score: float,
     per_behavior_limit: int,
     output: Path,
 ) -> None:
@@ -652,6 +677,7 @@ def dynamic_prepare_campaign(
             output,
             limit=limit,
             min_path_confidence=minimum_path_confidence,
+            min_review_score=minimum_review_score,
             per_behavior_limit=per_behavior_limit,
         )
     except (CampaignPreparationError, OSError, ValueError) as exc:

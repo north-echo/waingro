@@ -111,10 +111,16 @@ class HybridAssessment:
     attack_paths: tuple[AttackPath, ...] = ()
     missing_evidence: tuple[str, ...] = ()
     rationale: tuple[str, ...] = ()
+    review_score: float = 0.0
+    review_priority: str = "none"
     dynamic_recommended: bool = False
     dynamic_priority: str = "none"
     runtime_coverage: str = "not-run"
-    schema_version: str = "2.1"
+    schema_version: str = "2.2"
+
+    def __post_init__(self) -> None:
+        if not 0.0 <= self.review_score <= 1.0:
+            raise ValueError("review score must be between 0 and 1")
 
     def to_dict(self) -> dict:
         return {
@@ -126,6 +132,8 @@ class HybridAssessment:
             },
             "attack_paths": [path.to_dict() for path in self.attack_paths],
             "missing_evidence": list(self.missing_evidence),
+            "review_score": round(self.review_score, 3),
+            "review_priority": self.review_priority,
             "dynamic_recommended": self.dynamic_recommended,
             "dynamic_priority": self.dynamic_priority,
             "runtime_coverage": self.runtime_coverage,

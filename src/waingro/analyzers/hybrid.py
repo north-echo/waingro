@@ -55,6 +55,53 @@ def _dimension(items: list[EvidenceItem], *, trust: bool = False) -> EvidenceDim
     )
 
 
+def _review_score(
+    result: ScanResult,
+    evidence: list[EvidenceItem],
+    paths: list,
+    maliciousness: float,
+) -> float:
+    """Rank the need for review without estimating malicious intent.
+
+    The score is deliberately evidence-oriented: a purpose/implementation
+    mismatch, a correlated attack path, or a strong independently sourced
+    anomaly ranks ahead of an isolated dangerous primitive.  It is not a
+    probability and does not participate in the MALICIOUS verdict gate.
+    """
+    strongest_path = max((path.confidence for path in paths), default=0.0)
+    strongest_risk = max(
+        (
+            item.strength * item.confidence
+            for item in evidence
+            if item.polarity == EvidencePolarity.RISK
+        ),
+        default=0.0,
+    )
+    mismatch = max(
+        (
+            finding.confidence
+            for finding in result.findings
+            if finding.rule_id in {"BEHAV-001", "BEHAV-002", "BEHAV-003", "BEHAV-004"}
+        ),
+        default=0.0,
+    )
+    # Correlated signals compound, but no single static signal receives a
+    # perfect score. This preserves useful ordering among large corpora where
+    # many attack paths otherwise tie at confidence 1.0.
+    score = _noisy_or([
+        0.62 * strongest_path,
+        0.70 * strongest_risk,
+        0.72 * mismatch,
+        0.35 * maliciousness,
+    ])
+
+    # Detection libraries and other probable security tools still require
+    # review, but their embedded attack examples should not dominate a queue.
+    if result.security_tool_score >= 0.3:
+        score = min(score, 0.44)
+    return round(min(max(score, 0.0), 1.0), 3)
+
+
 def _static_evidence(result: ScanResult) -> tuple[list[EvidenceItem], dict[int, EvidenceItem]]:
     items = []
     mapping = {}
@@ -470,6 +517,16 @@ def assess_scan(
         ),
     )
 
+    review_score = _review_score(result, evidence, paths, maliciousness)
+    if review_score >= 0.80:
+        review_priority = "high"
+    elif review_score >= 0.35:
+        review_priority = "medium"
+    elif review_score > 0:
+        review_priority = "low"
+    else:
+        review_priority = "none"
+
     missing = []
     if not resolutions and result.package_references:
         missing.append("package-resolution")
@@ -533,8 +590,9 @@ def assess_scan(
 
     # An isolated run is coverage, not a box-check. A trace that only proves
     # the interpreter started cannot retire a static attack path. High-priority
-    # recommendations are reserved for correlated suspicious paths; isolated
-    # dangerous primitives remain visible as medium-priority opportunities.
+    # recommendations are reserved for evidence that ranks highly for review;
+    # isolated dangerous primitives remain visible without becoming intent
+    # claims. Review priority and maliciousness are intentionally independent.
     coverage_satisfied = legacy_trace or scenario_complete
     path_covered = (
         trusted_runtime_path if (static_paths or direct_exfil) else trusted_runtime_risk
@@ -544,10 +602,8 @@ def assess_scan(
         and result.security_tool_score < 0.3
         and not path_covered
     )
-    if verdict == AssessmentVerdict.SUSPICIOUS and eligible_for_dynamic:
-        dynamic_priority = "high"
-    elif verdict == AssessmentVerdict.CAPABILITY and eligible_for_dynamic:
-        dynamic_priority = "medium"
+    if eligible_for_dynamic and review_priority in {"high", "medium"}:
+        dynamic_priority = review_priority
     else:
         dynamic_priority = "none"
     dynamic_recommended = dynamic_priority == "high"
@@ -565,6 +621,7 @@ def assess_scan(
         f"Static capability score is {capability.score:.3f}; "
         "this measures dangerousness, not intent.",
         f"Correlated maliciousness confidence is {maliciousness:.3f}.",
+        f"Intent-neutral review score is {review_score:.3f} ({review_priority}).",
     ]
     if static_paths:
         rationale.append(f"Found {len(static_paths)} same-file static attack path(s).")
@@ -592,6 +649,8 @@ def assess_scan(
         attack_paths=tuple(paths),
         missing_evidence=tuple(missing),
         rationale=tuple(rationale),
+        review_score=review_score,
+        review_priority=review_priority,
         dynamic_recommended=dynamic_recommended,
         dynamic_priority=dynamic_priority,
         runtime_coverage=runtime_coverage,

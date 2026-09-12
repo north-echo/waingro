@@ -236,13 +236,21 @@ making an attribution.
 ## Benchmarking
 
 WAINGRO includes a non-executing benchmark command for datasets laid out as
-`DATASET/{benign,malicious}/CASE/SKILL.md`:
+`DATASET/{benign,malicious}/CASE/SKILL.md` or flat Markdown cases under each
+label directory:
 
 ```bash
 waingro benchmark ./dataset --threshold suspicious
 waingro benchmark ./dataset --format json --output benchmark.json \
-  --fail-under-precision 0.95 --fail-under-recall 0.90
+  --fail-under-precision 0.95 --fail-under-recall 0.90 \
+  --fail-under-average-precision 0.90
 ```
+
+The report separates threshold classification from an intent-neutral review
+ranking. `review_score` measures how urgently evidence should be investigated;
+it is not a probability of malicious intent and cannot produce a `MALICIOUS`
+verdict. Average precision and recall-at-budget show whether known malicious
+controls actually rise to the top instead of rewarding raw alert volume.
 
 On the 100-case [Runtime Skill Audit](https://github.com/tu-tuing/Runtime-Skill-Audit)
 dataset at revision `559986985e38f3d8743a217b69e37cb258c9b566`, WAINGRO's
@@ -251,6 +259,9 @@ negatives, and 3 false negatives: 100% precision, 94% recall, and 96.9% F1.
 The three misses are narrative-only disclosures with no active instruction or
 executable dataflow. This is one external dataset, not a claim of universal
 performance; keep adding real malicious samples and adversarial benign controls.
+The hybrid review ranking placed 47 of 50 malicious cases in the first 50
+positions (94% recall) with 96.97% average precision; none of the 50 benign
+cases received medium or high review priority.
 
 On the 180 Claude-format cases in
 [SkillFortifyBench](https://github.com/qualixar/skillfortifybench) revision
@@ -262,6 +273,9 @@ The difference exposes intentional limits: credential collection without a
 sink remains a warning, while typo- and dependency-squatting need an external
 ecosystem baseline. Benchmark percentages describe these frozen datasets, not
 the probability of detecting an unknown malicious skill.
+The hybrid review ranking placed 78 of 90 malicious cases in the first 90
+positions (86.67% recall) with 93.12% average precision; none of the 90 benign
+cases received medium or high review priority.
 
 ### Fresh ClawHub validation
 
