@@ -33,6 +33,27 @@ def test_parse_frontmatter_scalar_is_treated_as_invalid():
     assert body == "body\n"
 
 
+def test_parse_frontmatter_recovers_standard_fields_from_invalid_yaml():
+    content = """---
+name: prompt-guard
+description: Detect attacks. Trigger on: prompt injection
+tags: [security, detection]
+metadata:
+  privileged: true
+---
+# Prompt Guard
+"""
+
+    meta, body = parse_frontmatter(content)
+
+    assert meta == {
+        "name": "prompt-guard",
+        "description": "Detect attacks. Trigger on: prompt injection",
+        "tags": ["security", "detection"],
+    }
+    assert body == "# Prompt Guard\n"
+
+
 def test_extract_code_blocks():
     content = "text\n```bash\necho hello\n```\nmore text\n```python\nprint('hi')\n```\n"
     blocks = extract_code_blocks(content)

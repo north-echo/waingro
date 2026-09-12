@@ -30,6 +30,9 @@ BUNDLED_EXTENSIONS = {
     ".zsh",
 }
 MAX_BUNDLED_DEPTH = 2
+_RECOVERABLE_SCALAR_FIELDS = {"name", "description", "version", "author"}
+_RECOVERABLE_LIST_FIELDS = {"tags", "tools"}
+_FRONTMATTER_FIELD_RE = re.compile(r"^(name|description|version|author|tags|tools)\s*:\s*(.*?)\s*$")
 
 
 def _optional_text(value) -> str | None:
@@ -44,6 +47,45 @@ def _string_list(value) -> list[str]:
     return [item for item in value if isinstance(item, str)]
 
 
+def _strip_matching_quotes(value: str) -> str:
+    if len(value) >= 2 and value[0] == value[-1] and value[0] in {'"', "'"}:
+        return value[1:-1]
+    return value
+
+
+def _recover_frontmatter_fields(raw_yaml: str) -> dict:
+    """Recover bounded top-level identity fields from malformed YAML.
+
+    Many ecosystem manifests contain an unquoted colon in a one-line
+    description. Discarding the whole header hides the declared purpose and
+    turns examples into apparent live instructions. Recovery is intentionally
+    limited to unindented, single-line standard fields; nested metadata and
+    block scalars remain invalid rather than being guessed.
+    """
+    recovered: dict[str, object] = {}
+    for line in raw_yaml.splitlines():
+        if line[:1].isspace():
+            continue
+        match = _FRONTMATTER_FIELD_RE.fullmatch(line)
+        if not match:
+            continue
+        key, raw_value = match.groups()
+        value = raw_value.strip()
+        if not value or value in {"|", ">", "|-", ">-", "|+", ">+"}:
+            continue
+        if key in _RECOVERABLE_SCALAR_FIELDS:
+            recovered[key] = _strip_matching_quotes(value)
+            continue
+        if key in _RECOVERABLE_LIST_FIELDS:
+            if value.startswith("[") and value.endswith("]"):
+                value = value[1:-1]
+            items = [
+                _strip_matching_quotes(item.strip()) for item in value.split(",") if item.strip()
+            ]
+            recovered[key] = items
+    return recovered
+
+
 def parse_frontmatter(content: str) -> tuple[dict, str]:
     """Extract YAML frontmatter and return (metadata_dict, body)."""
     match = FRONTMATTER_RE.match(content)
@@ -54,7 +96,7 @@ def parse_frontmatter(content: str) -> tuple[dict, str]:
     try:
         metadata = yaml.safe_load(raw_yaml) or {}
     except yaml.YAMLError:
-        metadata = {}
+        metadata = _recover_frontmatter_fields(raw_yaml)
     if not isinstance(metadata, dict):
         metadata = {}
     return metadata, body
