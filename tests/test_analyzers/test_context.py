@@ -20,6 +20,19 @@ def test_security_tool_name_keywords(make_inline_skill):
     assert score >= 0.2  # Name contributes ~0.25
 
 
+def test_antivirus_identity_crosses_security_review_threshold(make_inline_skill):
+    skill = make_inline_skill(
+        name="clamav",
+        body="# ClamAV\n\nConfigure signatures, quarantine, and automated scanning.",
+        metadata_overrides={
+            "description": "Open-source antivirus and malware scanning reference.",
+            "tags": ["security", "malware"],
+        },
+    )
+
+    assert compute_security_tool_score(skill, [_make_finding("EXEC-003")]) >= 0.3
+
+
 def test_security_tool_combined_signals(make_inline_skill):
     """Skills with name + description + headings score high."""
     skill = make_inline_skill(

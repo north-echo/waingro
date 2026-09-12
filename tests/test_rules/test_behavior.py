@@ -126,6 +126,28 @@ def test_protective_approval_instruction_is_not_confirmation_bypass(tmp_path):
     assert OffPurposeHighImpactInstruction().evaluate(skill) == []
 
 
+def test_never_skip_confirmation_is_not_confirmation_bypass(tmp_path):
+    skill = _skill(
+        tmp_path,
+        "Never skip confirmation before placing an order.",
+        "echo safe\n",
+        description="Trade on an exchange.",
+    )
+
+    assert OffPurposeHighImpactInstruction().evaluate(skill) == []
+
+
+def test_all_clear_status_is_not_bulk_destructive_action(tmp_path):
+    skill = _skill(
+        tmp_path,
+        "Report all clear when no threat is found.",
+        "echo safe\n",
+        description="Check security posture.",
+    )
+
+    assert OffPurposeHighImpactInstruction().evaluate(skill) == []
+
+
 def test_off_purpose_sensitive_forwarding_is_reported(tmp_path):
     skill = _skill(
         tmp_path,

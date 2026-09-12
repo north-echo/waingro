@@ -219,12 +219,19 @@ class OffPurposeHighImpactInstruction(Rule):
             match = capability.pattern.search(skill.body)
             if not match:
                 continue
+            matched_text = match.group(0)
+            if (
+                capability.name == "bulk destructive action"
+                and re.search(r"\ball\s+clear\b", matched_text, re.IGNORECASE)
+            ):
+                continue
             if (
                 capability.name == "confirmation bypass"
                 and re.search(
                     r"\b(?:never|do\s+not|don't|must\s+not|avoid)\b[^.\n]{0,100}"
-                    r"\bwithout\b[^.\n]{0,60}\b(?:approval|confirmation)\b",
-                    match.group(0),
+                    r"(?:\bwithout\b[^.\n]{0,60}\b(?:approval|confirmation)\b|"
+                    r"\b(?:skip|bypass)\b[^.\n]{0,40}\b(?:approval|confirmation)\b)",
+                    matched_text,
                     re.IGNORECASE,
                 )
             ):
