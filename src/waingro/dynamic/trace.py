@@ -129,6 +129,15 @@ def _boolean(value: object, field: str) -> bool:
     return value
 
 
+def _string_list(value: object, field: str, *, maximum: int = 32) -> tuple[str, ...]:
+    if not isinstance(value, list) or len(value) > maximum:
+        raise RuntimeTraceError(f"invalid runtime trace field: {field}")
+    parsed = tuple(_text(item, field, required=True) or "" for item in value)
+    if len(parsed) != len(set(parsed)):
+        raise RuntimeTraceError(f"invalid runtime trace field: {field}")
+    return parsed
+
+
 def _digest(value: object, field: str) -> str:
     text = _text(value, field, required=True)
     if text is None:  # Defensive narrowing; required=True rejects this above.
@@ -253,6 +262,7 @@ def load_runtime_trace(
     allowed_signers: Path | None = None,
     signature_identity: str = "hanna2",
     expected_base_image_sha256: str | None = None,
+    expected_host_policy_sha256: str | None = None,
 ) -> RuntimeTrace:
     """Load a trace, bind it to an artifact, and optionally authenticate it."""
     payload = _regular_file(path, MAX_TRACE_BYTES)
@@ -260,7 +270,7 @@ def load_runtime_trace(
         raw = json.loads(payload)
     except (UnicodeDecodeError, json.JSONDecodeError) as exc:
         raise RuntimeTraceError("runtime trace is not valid JSON") from exc
-    if not isinstance(raw, dict) or raw.get("schema_version") not in {"1.0", "1.1"}:
+    if not isinstance(raw, dict) or raw.get("schema_version") not in {"1.0", "1.1", "1.2"}:
         raise RuntimeTraceError("unsupported runtime trace schema")
     schema_version = raw["schema_version"]
     artifact_sha256 = _digest(raw.get("artifact_sha256"), "artifact_sha256")
@@ -299,6 +309,19 @@ def load_runtime_trace(
             isolation_data.get("candidate_read_only"),
             "isolation.candidate_read_only",
         ),
+        external_network_interfaces=(
+            _string_list(
+                isolation_data.get("external_network_interfaces"),
+                "isolation.external_network_interfaces",
+            )
+            if schema_version == "1.2"
+            else ()
+        ),
+        sinkhole_local=(
+            _boolean(isolation_data.get("sinkhole_local"), "isolation.sinkhole_local")
+            if schema_version == "1.2"
+            else False
+        ),
     )
     base_image_verified = False
     if expected_base_image_sha256 is not None:
@@ -306,6 +329,30 @@ def load_runtime_trace(
         if isolation.base_image_sha256 != expected_base:
             raise RuntimeTraceError("runtime trace base image does not match approved image")
         base_image_verified = True
+    campaign_id = None
+    specimen_class = None
+    host_policy_sha256 = None
+    host_policy_verified = False
+    if schema_version == "1.2":
+        harness = raw.get("harness")
+        if not isinstance(harness, dict):
+            raise RuntimeTraceError("runtime trace harness record is missing")
+        campaign_id = _text(harness.get("campaign_id"), "harness.campaign_id", required=True)
+        specimen_class = _text(
+            harness.get("specimen_class"), "harness.specimen_class", required=True
+        )
+        if specimen_class not in {"fixture", "corpus"}:
+            raise RuntimeTraceError("runtime trace specimen class is invalid")
+        host_policy_sha256 = _digest(
+            harness.get("host_policy_sha256"), "harness.host_policy_sha256"
+        )
+        if expected_host_policy_sha256 is not None:
+            expected_policy = _digest(
+                expected_host_policy_sha256, "expected_host_policy_sha256"
+            )
+            if host_policy_sha256 != expected_policy:
+                raise RuntimeTraceError("runtime trace host policy does not match approved policy")
+            host_policy_verified = True
     events_raw = raw.get("events")
     if not isinstance(events_raw, list) or len(events_raw) > MAX_EVENTS:
         raise RuntimeTraceError(f"runtime trace exceeds {MAX_EVENTS} events")
@@ -328,6 +375,8 @@ def load_runtime_trace(
         warnings.append("runtime trace is not authenticated")
     if not base_image_verified:
         warnings.append("runtime trace base image was not matched to an approved digest")
+    if schema_version == "1.2" and not host_policy_verified:
+        warnings.append("runtime trace host policy was not matched to an approved digest")
     if not isolation.valid:
         warnings.append("runtime isolation record does not satisfy WAINGRO policy")
     started_at = _text(raw.get("started_at"), "started_at", required=True) or ""
@@ -345,7 +394,7 @@ def load_runtime_trace(
     exit_status = _text(raw.get("exit_status"), "exit_status", required=True) or ""
     coverage = (
         _coverage(raw.get("coverage"), events, exit_status)
-        if schema_version == "1.1"
+        if schema_version in {"1.1", "1.2"}
         else None
     )
     return RuntimeTrace(
@@ -362,7 +411,11 @@ def load_runtime_trace(
         signature_verified=signature_verified,
         signature_identity=signature_identity if signature_verified else None,
         base_image_verified=base_image_verified,
+        host_policy_verified=host_policy_verified,
         coverage=coverage,
         warnings=tuple(warnings),
         schema_version=schema_version,
+        campaign_id=campaign_id,
+        specimen_class=specimen_class,
+        host_policy_sha256=host_policy_sha256,
     )

@@ -14,7 +14,7 @@ def test_version_command():
     runner = CliRunner()
     result = runner.invoke(main, ["version"])
     assert result.exit_code == 0
-    assert "0.7.0" in result.output
+    assert "0.8.0" in result.output
 
 
 def test_scan_clean_console():
@@ -196,6 +196,8 @@ def test_dynamic_plan_command_records_scenario_contract(tmp_path):
             "waingro-base.qcow2",
             "--base-image-sha256",
             "a" * 64,
+            "--host-policy-sha256",
+            "d" * 64,
             "--authorize-execution",
             "--interpreter",
             "python",

@@ -30,6 +30,7 @@ from pathlib import Path, PurePosixPath
 
 import yaml
 
+from waingro.dynamic.host import DEFAULT_HOST_POLICY, HostPolicyError, require_host_posture
 from waingro.dynamic.plan import (
     COVERAGE_EVENT_TYPES,
     SYNTHETIC_VALUE_PROFILES,
@@ -50,6 +51,9 @@ _ENTRYPOINT_RE = re.compile(r"^[A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)?$")
 _EXECUTABLE_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._+-]{0,63}$")
 MAX_ARTIFACT_FILES = 10_000
 MAX_ARTIFACT_BYTES = 1024 * 1024 * 1024
+MAX_OVERLAY_BYTES = 4 * 1024 * 1024 * 1024
+MIN_HOST_FREE_BYTES = 12 * 1024 * 1024 * 1024
+_CAMPAIGN_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
 
 
 class DynamicRunnerError(RuntimeError):
@@ -119,7 +123,7 @@ def _load_plan(path: Path) -> dict:
         plan = json.loads(payload)
     except (UnicodeDecodeError, json.JSONDecodeError) as exc:
         raise DynamicRunnerError("dynamic plan is not valid JSON") from exc
-    if not isinstance(plan, dict) or plan.get("schema_version") != "1.1":
+    if not isinstance(plan, dict) or plan.get("schema_version") != "1.2":
         raise DynamicRunnerError("unsupported dynamic plan schema")
     job_id = plan.get("job_id")
     artifact = plan.get("artifact")
@@ -142,7 +146,7 @@ def _load_plan(path: Path) -> dict:
         raise DynamicRunnerError("dynamic plan does not require read-only ISO transport")
     if execution.get("synthetic_credentials") is not True:
         raise DynamicRunnerError("dynamic plan does not require synthetic credentials")
-    if execution.get("network_policy") != "none":
+    if execution.get("network_policy") not in {"none", "loopback-sinkhole"}:
         raise DynamicRunnerError("dynamic plan requests a forbidden network policy")
     digest = artifact.get("sha256")
     base_digest = execution.get("base_image_sha256")
@@ -150,6 +154,26 @@ def _load_plan(path: Path) -> dict:
         raise DynamicRunnerError("dynamic plan has an invalid artifact digest")
     if not isinstance(base_digest, str) or not _DIGEST_RE.fullmatch(base_digest):
         raise DynamicRunnerError("dynamic plan has an invalid base image digest")
+    policy_digest = execution.get("host_policy_sha256")
+    campaign_id = execution.get("campaign_id")
+    specimen_class = execution.get("specimen_class")
+    corpus_authorized = execution.get("corpus_authorized")
+    if (
+        not isinstance(policy_digest, str)
+        or not _DIGEST_RE.fullmatch(policy_digest)
+        or policy_digest == "0" * 64
+    ):
+        raise DynamicRunnerError("dynamic plan has an invalid host policy digest")
+    if not isinstance(campaign_id, str) or not _CAMPAIGN_RE.fullmatch(campaign_id):
+        raise DynamicRunnerError("dynamic plan has an invalid campaign id")
+    if specimen_class not in {"fixture", "corpus"}:
+        raise DynamicRunnerError("dynamic plan has an invalid specimen class")
+    if (
+        not isinstance(corpus_authorized, bool)
+        or (specimen_class == "corpus" and corpus_authorized is not True)
+        or (specimen_class == "fixture" and corpus_authorized is not False)
+    ):
+        raise DynamicRunnerError("dynamic plan violates the separate corpus authorization gate")
     base_image = execution.get("base_image")
     if (
         not isinstance(base_image, str)
@@ -283,6 +307,11 @@ def _load_plan(path: Path) -> dict:
 
 
 def _verify_base_capabilities(base_image: Path, base_digest: str, required: list[str]) -> None:
+    image_info = base_image.stat()
+    if socket.gethostname().split(".", 1)[0] == "hanna2" and (
+        image_info.st_uid != 0 or image_info.st_mode & (stat.S_IWGRP | stat.S_IWOTH)
+    ):
+        raise DynamicRunnerError("base image must be root-owned and immutable to the runner")
     manifest_path = base_image.with_suffix(base_image.suffix + ".capabilities.json")
     try:
         payload = _bounded_regular_file(manifest_path, MAX_CAPABILITY_MANIFEST_BYTES)
@@ -291,6 +320,13 @@ def _verify_base_capabilities(base_image: Path, base_digest: str, required: list
         raise DynamicRunnerError("base image capability manifest is missing or invalid") from exc
     if not isinstance(manifest, dict):
         raise DynamicRunnerError("base image capability manifest violates policy")
+    manifest_info = manifest_path.stat()
+    if socket.gethostname().split(".", 1)[0] == "hanna2" and (
+        manifest_info.st_uid != 0 or manifest_info.st_mode & (stat.S_IWGRP | stat.S_IWOTH)
+    ):
+        raise DynamicRunnerError(
+            "capability manifest must be root-owned and immutable to the runner"
+        )
     executables = manifest.get("executables")
     if (
         manifest.get("schema_version") != "1.0"
@@ -356,28 +392,9 @@ def _capture_console_chunk(master_fd: int, output, total: int) -> tuple[int, boo
     return total, False
 
 
-def _verify_host(work_root: Path) -> None:
-    if socket.gethostname().split(".", 1)[0] != "hanna2":
-        raise DynamicRunnerError("dynamic execution is restricted to hanna2")
-    if os.geteuid() == 0:
-        raise DynamicRunnerError("dynamic runner may not execute as root")
-    kvm = Path("/dev/kvm")
-    if (
-        not kvm.exists()
-        or not stat.S_ISCHR(kvm.stat().st_mode)
-        or not os.access(kvm, os.R_OK | os.W_OK)
-    ):
-        raise DynamicRunnerError("KVM hardware virtualization is unavailable")
-    enforce = Path("/sys/fs/selinux/enforce")
-    if not enforce.is_file() or enforce.read_text(encoding="ascii").strip() != "1":
-        raise DynamicRunnerError("SELinux must be enforcing")
-    if work_root.is_symlink():
-        raise DynamicRunnerError("dynamic work root may not be a symlink")
-    root = work_root.resolve(strict=True)
-    info = root.stat()
-    if not stat.S_ISDIR(info.st_mode) or info.st_mode & stat.S_IWOTH:
-        raise DynamicRunnerError("dynamic work root is not a protected directory")
-    _run_command(["virsh", "-c", "qemu:///system", "uri"], timeout=10)
+def _allocated_bytes(path: Path) -> int:
+    """Return host blocks consumed by a sparse file, not its virtual size."""
+    return path.stat().st_blocks * 512
 
 
 def _copy_artifact(candidate: Path, plan: dict, destination: Path) -> None:
@@ -472,7 +489,10 @@ def _build_domain_xml(plan: dict, overlay: Path, input_iso: Path) -> bytes:
     features = ET.SubElement(domain, "features")
     ET.SubElement(features, "acpi")
     ET.SubElement(features, "apic")
-    ET.SubElement(domain, "cpu", {"mode": "host-model", "check": "partial"})
+    ET.SubElement(features, "pmu", {"state": "off"})
+    cpu = ET.SubElement(domain, "cpu", {"mode": "host-model", "check": "partial"})
+    ET.SubElement(cpu, "feature", {"policy": "disable", "name": "vmx"})
+    ET.SubElement(cpu, "feature", {"policy": "disable", "name": "svm"})
     ET.SubElement(domain, "clock", {"offset": "utc"})
     ET.SubElement(domain, "on_poweroff").text = "destroy"
     ET.SubElement(domain, "on_reboot").text = "destroy"
@@ -484,18 +504,27 @@ def _build_domain_xml(plan: dict, overlay: Path, input_iso: Path) -> bytes:
     ET.SubElement(disk, "driver", {"name": "qemu", "type": "qcow2", "cache": "none"})
     ET.SubElement(disk, "source", {"file": str(overlay)})
     ET.SubElement(disk, "target", {"dev": "vda", "bus": "virtio"})
-    cdrom = ET.SubElement(devices, "disk", {"type": "file", "device": "cdrom"})
-    ET.SubElement(cdrom, "driver", {"name": "qemu", "type": "raw"})
-    ET.SubElement(cdrom, "source", {"file": str(input_iso)})
-    ET.SubElement(cdrom, "target", {"dev": "sda", "bus": "sata"})
-    ET.SubElement(cdrom, "readonly")
-    ET.SubElement(devices, "controller", {"type": "sata", "index": "0"})
+    input_disk = ET.SubElement(devices, "disk", {"type": "file", "device": "disk"})
+    ET.SubElement(input_disk, "driver", {"name": "qemu", "type": "raw", "cache": "none"})
+    ET.SubElement(input_disk, "source", {"file": str(input_iso)})
+    ET.SubElement(input_disk, "target", {"dev": "vdb", "bus": "virtio"})
+    ET.SubElement(input_disk, "readonly")
+    ET.SubElement(devices, "controller", {"type": "usb", "model": "none"})
     # Libvirt owns the pseudo-terminal. The runner captures it through the
     # libvirt console API, so QEMU receives no writable host-file endpoint.
     serial = ET.SubElement(devices, "serial", {"type": "pty"})
     ET.SubElement(serial, "target", {"type": "isa-serial", "port": "0"})
     ET.SubElement(devices, "video").append(ET.Element("model", {"type": "none"}))
     ET.SubElement(devices, "memballoon", {"model": "none"})
+    qemu_namespace = "http://libvirt.org/schemas/domain/qemu/1.0"
+    ET.register_namespace("qemu", qemu_namespace)
+    commandline = ET.SubElement(domain, f"{{{qemu_namespace}}}commandline")
+    ET.SubElement(commandline, f"{{{qemu_namespace}}}arg", {"value": "-sandbox"})
+    ET.SubElement(
+        commandline,
+        f"{{{qemu_namespace}}}arg",
+        {"value": "on,obsolete=deny,elevateprivileges=deny,spawn=deny,resourcecontrol=deny"},
+    )
     return ET.tostring(domain, encoding="utf-8", xml_declaration=True)
 
 
@@ -540,6 +569,16 @@ def _sign_trace(trace_path: Path, signing_key: Path) -> Path:
     return signature
 
 
+def _verify_signing_key(signing_key: Path | None) -> None:
+    if signing_key is None:
+        return
+    if signing_key.is_symlink() or not signing_key.is_file():
+        raise DynamicRunnerError("runtime signing key is unavailable or unsafe")
+    info = signing_key.stat()
+    if info.st_uid != os.geteuid() or info.st_mode & (stat.S_IRWXG | stat.S_IRWXO):
+        raise DynamicRunnerError("runtime signing key must be runner-owned with mode 0600")
+
+
 def run_dynamic_job(
     plan_path: Path,
     candidate: Path,
@@ -549,13 +588,28 @@ def run_dynamic_job(
     work_root: Path,
     output_trace: Path,
     signing_key: Path | None = None,
+    host_policy_path: Path = DEFAULT_HOST_POLICY,
 ) -> DynamicRunResult:
     """Execute one authorized plan in a transient hanna2 KVM guest."""
     plan = _load_plan(plan_path)
     job_id = plan["job_id"]
     if confirm_job_id != job_id:
         raise DynamicRunnerError("job confirmation does not match the authorized plan")
-    _verify_host(work_root)
+    try:
+        require_host_posture(
+            host_policy_path,
+            expected_policy_sha256=plan["execution"]["host_policy_sha256"],
+            specimen_class=plan["execution"]["specimen_class"],
+            artifact_sha256=plan["artifact"]["sha256"],
+            campaign_id=plan["execution"]["campaign_id"],
+            network_policy=plan["execution"]["network_policy"],
+            work_root=work_root,
+        )
+    except HostPolicyError as exc:
+        raise DynamicRunnerError(str(exc)) from exc
+    _verify_signing_key(signing_key)
+    if shutil.disk_usage(work_root).free < MIN_HOST_FREE_BYTES:
+        raise DynamicRunnerError("dynamic work root has less than 12 GiB free")
     if output_trace.exists():
         raise DynamicRunnerError(f"runtime trace output already exists: {output_trace}")
     if not candidate.is_dir() or candidate.is_symlink():
@@ -579,6 +633,7 @@ def run_dynamic_job(
     )
     timed_out = False
     domain_started = False
+    trace_payload: bytes | None = None
     with tempfile.TemporaryDirectory(prefix=f"{job_id}-", dir=work_root) as temporary:
         job_dir = Path(temporary)
         job_dir.chmod(0o711)
@@ -631,6 +686,14 @@ def run_dynamic_job(
             console_bytes = 0
             console_closed = False
             while time.monotonic() < deadline:
+                if _allocated_bytes(overlay) > MAX_OVERLAY_BYTES:
+                    raise DynamicRunnerError(
+                        "dynamic overlay exceeded its 4 GiB host allocation cap"
+                    )
+                if shutil.disk_usage(work_root).free < MIN_HOST_FREE_BYTES:
+                    raise DynamicRunnerError(
+                        "dynamic work root crossed its 12 GiB free-space floor"
+                    )
                 if not console_closed:
                     console_bytes, console_closed = _capture_console_chunk(
                         console_master,
@@ -648,7 +711,12 @@ def run_dynamic_job(
                     check=False,
                     env={"PATH": "/usr/sbin:/usr/bin:/sbin:/bin"},
                 )
-                if state.returncode != 0 or state.stdout.strip() in {"shut off", "crashed"}:
+                if state.returncode != 0:
+                    # The domain may still be alive when a status query fails.
+                    # Keep domain_started true so the finally block attempts a
+                    # fail-safe destroy before any workspace cleanup.
+                    break
+                if state.stdout.strip() in {"shut off", "crashed"}:
                     domain_started = False
                     for _ in range(4):
                         if console_closed:
@@ -697,20 +765,36 @@ def run_dynamic_job(
         if timed_out:
             raise DynamicRunnerError("dynamic guest exceeded its total runtime limit")
         trace_payload = _extract_trace(serial_log)
-        descriptor = os.open(output_trace, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-        try:
-            view = memoryview(trace_payload)
-            while view:
-                written = os.write(descriptor, view)
-                view = view[written:]
-            os.fsync(descriptor)
-        finally:
-            os.close(descriptor)
+
+    try:
+        require_host_posture(
+            host_policy_path,
+            expected_policy_sha256=plan["execution"]["host_policy_sha256"],
+            specimen_class=plan["execution"]["specimen_class"],
+            artifact_sha256=plan["artifact"]["sha256"],
+            campaign_id=plan["execution"]["campaign_id"],
+            network_policy=plan["execution"]["network_policy"],
+            work_root=work_root,
+        )
+    except HostPolicyError as exc:
+        raise DynamicRunnerError("post-run host posture failed: " + str(exc)) from exc
+    if trace_payload is None:
+        raise DynamicRunnerError("dynamic guest produced no trace")
+    descriptor = os.open(output_trace, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    try:
+        view = memoryview(trace_payload)
+        while view:
+            written = os.write(descriptor, view)
+            view = view[written:]
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
 
     loaded = load_runtime_trace(
         output_trace,
         expected_artifact_sha256=plan["artifact"]["sha256"],
         expected_base_image_sha256=plan["execution"]["base_image_sha256"],
+        expected_host_policy_sha256=plan["execution"]["host_policy_sha256"],
     )
     if loaded.run_id != job_id:
         raise DynamicRunnerError("guest runtime trace has the wrong job id")

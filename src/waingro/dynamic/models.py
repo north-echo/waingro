@@ -57,6 +57,8 @@ class IsolationRecord:
     network_policy: str
     base_image_sha256: str
     candidate_read_only: bool
+    external_network_interfaces: tuple[str, ...] = ()
+    sinkhole_local: bool = False
 
     @property
     def valid(self) -> bool:
@@ -66,7 +68,11 @@ class IsolationRecord:
             and self.ephemeral_disk
             and not self.host_shares
             and not self.host_credentials
-            and self.network_policy == "none"
+            and not self.external_network_interfaces
+            and (
+                (self.network_policy == "none" and not self.sinkhole_local)
+                or (self.network_policy == "loopback-sinkhole" and self.sinkhole_local)
+            )
             and self.candidate_read_only
             and len(self.base_image_sha256) == 64
         )
@@ -79,6 +85,8 @@ class IsolationRecord:
             "host_shares": self.host_shares,
             "host_credentials": self.host_credentials,
             "network_policy": self.network_policy,
+            "external_network_interfaces": list(self.external_network_interfaces),
+            "sinkhole_local": self.sinkhole_local,
             "base_image_sha256": self.base_image_sha256,
             "candidate_read_only": self.candidate_read_only,
             "valid": self.valid,
@@ -120,9 +128,13 @@ class RuntimeTrace:
     signature_verified: bool = False
     signature_identity: str | None = None
     base_image_verified: bool = False
+    host_policy_verified: bool = False
     coverage: RuntimeCoverage | None = None
     warnings: tuple[str, ...] = field(default_factory=tuple)
     schema_version: str = "1.0"
+    campaign_id: str | None = None
+    specimen_class: str | None = None
+    host_policy_sha256: str | None = None
 
     @property
     def trusted(self) -> bool:
@@ -130,6 +142,7 @@ class RuntimeTrace:
             self.signature_verified
             and self.signature_identity == self.host
             and self.base_image_verified
+            and (self.schema_version != "1.2" or self.host_policy_verified)
             and self.host == "hanna2"
             and self.backend == "libvirt-kvm"
             and self.isolation.valid
@@ -151,6 +164,10 @@ class RuntimeTrace:
             "signature_verified": self.signature_verified,
             "signature_identity": self.signature_identity,
             "base_image_verified": self.base_image_verified,
+            "host_policy_verified": self.host_policy_verified,
+            "campaign_id": self.campaign_id,
+            "specimen_class": self.specimen_class,
+            "host_policy_sha256": self.host_policy_sha256,
             "coverage": self.coverage.to_dict() if self.coverage else None,
             "trusted": self.trusted,
             "warnings": list(self.warnings),

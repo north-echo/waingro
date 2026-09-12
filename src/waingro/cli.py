@@ -9,6 +9,7 @@ import click
 from waingro import __version__
 from waingro.analyzers.hybrid import assess_scan
 from waingro.analyzers.risk_profile import compute_risk_profile
+from waingro.dynamic.campaign import CampaignPreparationError, prepare_campaign_queue
 from waingro.dynamic.plan import build_dynamic_plan, preflight_hanna2, write_plan
 from waingro.dynamic.runner import DynamicRunnerError, run_dynamic_job
 from waingro.dynamic.trace import load_runtime_trace
@@ -453,6 +454,11 @@ def resolve_packages(
     default=None,
 )
 @click.option("--runtime-base-image-sha256", default=None)
+@click.option(
+    "--runtime-host-policy-sha256",
+    default=None,
+    help="Approved host-policy digest for schema 1.2 runtime evidence.",
+)
 @click.option("-o", "--output", type=click.Path(path_type=Path), default=None)
 def assess(
     path: Path,
@@ -469,6 +475,7 @@ def assess(
     runtime_signature: Path | None,
     allowed_signers: Path | None,
     runtime_base_image_sha256: str | None,
+    runtime_host_policy_sha256: str | None,
     output: Path | None,
 ) -> None:
     """Correlate static, ecosystem, package, provenance, and runtime evidence."""
@@ -542,6 +549,7 @@ def assess(
                 signature_path=runtime_signature,
                 allowed_signers=allowed_signers,
                 expected_base_image_sha256=runtime_base_image_sha256,
+                expected_host_policy_sha256=runtime_host_policy_sha256,
             )
             if runtime_trace
             else None
@@ -587,12 +595,68 @@ def dynamic() -> None:
 
 
 @dynamic.command("preflight")
-def dynamic_preflight() -> None:
+@click.option(
+    "--host-policy",
+    type=click.Path(exists=True, dir_okay=False, path_type=Path),
+    default=Path("/etc/waingro/host-policy.json"),
+    show_default=True,
+)
+@click.option(
+    "--work-root",
+    type=click.Path(exists=True, file_okay=False, path_type=Path),
+    default=Path("/var/lib/waingro/jobs"),
+    show_default=True,
+)
+def dynamic_preflight(host_policy: Path, work_root: Path) -> None:
     """Run read-only hanna2 KVM and libvirt readiness checks."""
-    report = preflight_hanna2()
+    report = preflight_hanna2(host_policy, work_root)
     click.echo(json.dumps(report, indent=2))
     if not report["ready"]:
         raise click.ClickException("host does not satisfy the hanna2 dynamic policy")
+
+
+@dynamic.command("prepare-campaign")
+@click.argument("input_jsonl", type=click.Path(exists=True, dir_okay=False, path_type=Path))
+@click.option(
+    "--corpus-root",
+    required=True,
+    type=click.Path(exists=True, file_okay=False, path_type=Path),
+)
+@click.option("--limit", type=click.IntRange(1, 500), default=50, show_default=True)
+@click.option(
+    "--minimum-path-confidence",
+    type=click.FloatRange(0.5, 1.0),
+    default=0.95,
+    show_default=True,
+)
+@click.option(
+    "--per-behavior-limit",
+    type=click.IntRange(1, 10),
+    default=3,
+    show_default=True,
+)
+@click.option("-o", "--output", required=True, type=click.Path(path_type=Path))
+def dynamic_prepare_campaign(
+    input_jsonl: Path,
+    corpus_root: Path,
+    limit: int,
+    minimum_path_confidence: float,
+    per_behavior_limit: int,
+    output: Path,
+) -> None:
+    """Build a deduplicated review queue; never execute candidate content."""
+    try:
+        report = prepare_campaign_queue(
+            input_jsonl,
+            corpus_root,
+            output,
+            limit=limit,
+            min_path_confidence=minimum_path_confidence,
+            per_behavior_limit=per_behavior_limit,
+        )
+    except (CampaignPreparationError, OSError, ValueError) as exc:
+        raise click.ClickException(str(exc)) from exc
+    click.echo(json.dumps(report["counts"], indent=2))
 
 
 @dynamic.command("plan")
@@ -600,8 +664,26 @@ def dynamic_preflight() -> None:
 @click.option("--base-image", required=True, help="Pinned base-image file name on hanna2.")
 @click.option("--base-image-sha256", required=True)
 @click.option(
+    "--host-policy-sha256",
+    default=None,
+    help="Pinned digest of the root-owned hanna2 host policy; required for execution.",
+)
+@click.option("--campaign-id", default="fixture-validation", show_default=True)
+@click.option(
+    "--specimen-class",
+    type=click.Choice(["fixture", "corpus"]),
+    default="fixture",
+    show_default=True,
+)
+@click.option(
+    "--authorize-corpus",
+    is_flag=True,
+    default=False,
+    help="Second explicit gate required for a corpus execution plan.",
+)
+@click.option(
     "--network-policy",
-    type=click.Choice(["none"]),
+    type=click.Choice(["none", "loopback-sinkhole"]),
     default="none",
     show_default=True,
 )
@@ -654,6 +736,10 @@ def dynamic_plan(
     path: Path,
     base_image: str,
     base_image_sha256: str,
+    host_policy_sha256: str | None,
+    campaign_id: str,
+    specimen_class: str,
+    authorize_corpus: bool,
     network_policy: str,
     timeout_seconds: int,
     memory_mib: int,
@@ -682,6 +768,10 @@ def dynamic_plan(
             result.artifact_identity,
             base_image=base_image,
             base_image_sha256=base_image_sha256,
+            host_policy_sha256=host_policy_sha256,
+            campaign_id=campaign_id,
+            specimen_class=specimen_class,
+            authorize_corpus=authorize_corpus,
             network_policy=network_policy,
             timeout_seconds=timeout_seconds,
             memory_mib=memory_mib,
@@ -714,12 +804,14 @@ def dynamic_plan(
     default=None,
 )
 @click.option("--base-image-sha256", default=None)
+@click.option("--host-policy-sha256", default=None)
 def dynamic_validate_trace(
     path: Path,
     trace: Path,
     signature: Path | None,
     allowed_signers: Path | None,
     base_image_sha256: str | None,
+    host_policy_sha256: str | None,
 ) -> None:
     """Validate and optionally authenticate a hanna2 runtime trace."""
     if bool(signature) != bool(allowed_signers):
@@ -738,6 +830,7 @@ def dynamic_validate_trace(
             signature_path=signature,
             allowed_signers=allowed_signers,
             expected_base_image_sha256=base_image_sha256,
+            expected_host_policy_sha256=host_policy_sha256,
         )
     except (OSError, ValueError) as exc:
         raise click.ClickException(str(exc)) from exc
@@ -767,7 +860,13 @@ def dynamic_validate_trace(
 @click.option(
     "--work-root",
     type=click.Path(exists=True, file_okay=False, path_type=Path),
-    default=Path("/var/lib/libvirt/images/waingro/jobs"),
+    default=Path("/var/lib/waingro/jobs"),
+    show_default=True,
+)
+@click.option(
+    "--host-policy",
+    type=click.Path(exists=True, dir_okay=False, path_type=Path),
+    default=Path("/etc/waingro/host-policy.json"),
     show_default=True,
 )
 @click.option(
@@ -787,6 +886,7 @@ def dynamic_run(
     confirm_job_id: str,
     image_dir: Path,
     work_root: Path,
+    host_policy: Path,
     signing_key: Path | None,
     output: Path,
 ) -> None:
@@ -798,6 +898,7 @@ def dynamic_run(
             confirm_job_id=confirm_job_id,
             image_dir=image_dir,
             work_root=work_root,
+            host_policy_path=host_policy,
             output_trace=output,
             signing_key=signing_key,
         )

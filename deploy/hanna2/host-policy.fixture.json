@@ -1,0 +1,14 @@
+{
+  "schema_version": "1.0",
+  "host": "hanna2",
+  "runner_user": "waingro-runner",
+  "dedicated": true,
+  "corpus_execution_enabled": false,
+  "campaign_id": "fixture-validation",
+  "allowed_artifact_sha256": [],
+  "allowed_network_policies": [
+    "none",
+    "loopback-sinkhole"
+  ],
+  "egress_marker": "/run/waingro/egress-locked"
+}

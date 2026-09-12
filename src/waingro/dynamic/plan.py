@@ -6,14 +6,15 @@ import hashlib
 import json
 import os
 import re
-import shutil
-import socket
-import stat
-import subprocess
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
 
+from waingro.dynamic.host import (
+    ALLOWED_NETWORK_POLICIES,
+    ALLOWED_SPECIMEN_CLASSES,
+    inspect_host_posture,
+)
 from waingro.models import ArtifactFileDigest, ArtifactIdentity
 
 _DIGEST_RE = re.compile(r"^[0-9a-f]{64}$")
@@ -21,6 +22,7 @@ _IMAGE_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*\.qcow2$")
 _ENTRYPOINT_RE = re.compile(r"^[A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)?$")
 _EXECUTABLE_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._+-]{0,63}$")
 _ENVIRONMENT_RE = re.compile(r"^[A-Z][A-Z0-9_]{0,63}$")
+_CAMPAIGN_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
 _INTERPRETER_EXECUTABLE = {"python": "python3", "node": "node", "shell": "bash"}
 SYNTHETIC_VALUE_PROFILES = frozenset(
     {"access-key", "api-key", "password", "secret-key", "token"}
@@ -94,6 +96,10 @@ class DynamicPlan:
     backend: str
     base_image: str
     base_image_sha256: str
+    host_policy_sha256: str
+    campaign_id: str
+    specimen_class: str
+    corpus_authorized: bool
     network_policy: str
     timeout_seconds: int
     memory_mib: int
@@ -107,7 +113,7 @@ class DynamicPlan:
     required_event_types: tuple[str, ...]
     require_exit_zero: bool
     created_at: str
-    schema_version: str = "1.1"
+    schema_version: str = "1.2"
 
     def to_dict(self) -> dict:
         return {
@@ -132,6 +138,10 @@ class DynamicPlan:
                 "backend": self.backend,
                 "base_image": self.base_image,
                 "base_image_sha256": self.base_image_sha256,
+                "host_policy_sha256": self.host_policy_sha256,
+                "campaign_id": self.campaign_id,
+                "specimen_class": self.specimen_class,
+                "corpus_authorized": self.corpus_authorized,
                 "disk_mode": "ephemeral-overlay",
                 "candidate_transport": "read-only-iso",
                 "host_shares": False,
@@ -192,6 +202,10 @@ def build_dynamic_plan(
     *,
     base_image: str,
     base_image_sha256: str,
+    host_policy_sha256: str | None = None,
+    campaign_id: str = "fixture-validation",
+    specimen_class: str = "fixture",
+    authorize_corpus: bool = False,
     network_policy: str = "none",
     timeout_seconds: int = 120,
     memory_mib: int = 1024,
@@ -209,8 +223,21 @@ def build_dynamic_plan(
     digest = base_image_sha256.lower()
     if not _DIGEST_RE.fullmatch(digest):
         raise ValueError("base image SHA-256 must be 64 hexadecimal characters")
-    if network_policy != "none":
-        raise ValueError("dynamic execution currently requires network policy none")
+    policy_digest = (host_policy_sha256 or "0" * 64).lower()
+    if not _DIGEST_RE.fullmatch(policy_digest):
+        raise ValueError("host policy SHA-256 must be 64 hexadecimal characters")
+    if authorize_execution and policy_digest == "0" * 64:
+        raise ValueError("authorized execution requires a pinned host policy digest")
+    if not _CAMPAIGN_RE.fullmatch(campaign_id):
+        raise ValueError("campaign ID violates policy")
+    if specimen_class not in ALLOWED_SPECIMEN_CLASSES:
+        raise ValueError("specimen class must be fixture or corpus")
+    if specimen_class == "corpus" and authorize_execution and not authorize_corpus:
+        raise ValueError("corpus execution requires separate explicit authorization")
+    if specimen_class == "fixture" and authorize_corpus:
+        raise ValueError("fixture plans may not carry corpus authorization")
+    if network_policy not in ALLOWED_NETWORK_POLICIES:
+        raise ValueError("network policy must be none or loopback-sinkhole")
     if not 10 <= timeout_seconds <= 300:
         raise ValueError("dynamic timeout must be between 10 and 300 seconds")
     if not 256 <= memory_mib <= 2048:
@@ -296,6 +323,10 @@ def build_dynamic_plan(
         backend="libvirt-kvm",
         base_image=base_name,
         base_image_sha256=digest,
+        host_policy_sha256=policy_digest,
+        campaign_id=campaign_id,
+        specimen_class=specimen_class,
+        corpus_authorized=authorize_corpus,
         network_policy=network_policy,
         timeout_seconds=timeout_seconds,
         memory_mib=memory_mib,
@@ -328,42 +359,8 @@ def write_plan(plan: DynamicPlan, output: Path) -> None:
         os.close(descriptor)
 
 
-def preflight_hanna2() -> dict:
-    """Read-only host checks. This function never starts a VM."""
-    checks: dict[str, dict] = {}
-    hostname = socket.gethostname().split(".", 1)[0]
-    checks["hostname"] = {"ok": hostname == "hanna2", "observed": hostname}
-    checks["unprivileged_user"] = {"ok": os.geteuid() != 0, "observed": os.geteuid()}
-    kvm = Path("/dev/kvm")
-    kvm_ok = False
-    if kvm.exists():
-        mode = kvm.stat().st_mode
-        kvm_ok = stat.S_ISCHR(mode) and os.access(kvm, os.R_OK | os.W_OK)
-    checks["kvm"] = {"ok": kvm_ok, "observed": str(kvm)}
-    for command in ("virsh", "qemu-img", "ssh-keygen"):
-        found = shutil.which(command)
-        checks[command] = {"ok": found is not None, "observed": found}
-    enforce = Path("/sys/fs/selinux/enforce")
-    selinux = enforce.read_text(encoding="ascii").strip() if enforce.is_file() else None
-    checks["selinux_enforcing"] = {"ok": selinux == "1", "observed": selinux}
-    virsh = shutil.which("virsh")
-    if virsh:
-        result = subprocess.run(  # noqa: S603 -- fixed command and no candidate input.
-            [virsh, "-c", "qemu:///system", "uri"],
-            capture_output=True,
-            timeout=10,
-            check=False,
-            text=True,
-            env={"PATH": "/usr/bin:/bin"},
-        )
-        checks["libvirt_system"] = {
-            "ok": result.returncode == 0 and result.stdout.strip() == "qemu:///system",
-            "observed": result.stdout.strip() or result.stderr.strip()[:300],
-        }
-    else:
-        checks["libvirt_system"] = {"ok": False, "observed": None}
-    return {
-        "host": hostname,
-        "ready": all(check["ok"] for check in checks.values()),
-        "checks": checks,
-    }
+def preflight_hanna2(policy_path: Path | None = None, work_root: Path | None = None) -> dict:
+    """Read-only dedicated-host checks.  This function never starts a VM."""
+    if policy_path is None:
+        return inspect_host_posture(work_root=work_root)
+    return inspect_host_posture(policy_path, work_root=work_root)

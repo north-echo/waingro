@@ -8,10 +8,12 @@ from pathlib import Path
 import pytest
 
 from waingro.dynamic import guest_agent_payload
-from waingro.dynamic.guest_agent_payload import _connect_event_type
+from waingro.dynamic.guest_agent_payload import _connect_event_type, _dns_name
+from waingro.dynamic.host import HostPolicy
 from waingro.dynamic.plan import build_dynamic_plan, write_plan
 from waingro.dynamic.runner import (
     DynamicRunnerError,
+    _allocated_bytes,
     _build_domain_xml,
     _extract_trace,
     _load_plan,
@@ -26,6 +28,7 @@ from waingro.models import ArtifactFileDigest, ArtifactIdentity
 from waingro.scanner import scan_skill
 
 FIXTURES = Path(__file__).parent / "fixtures"
+HOST_POLICY_DIGEST = "d" * 64
 
 
 def _identity(records: list[ArtifactFileDigest]) -> ArtifactIdentity:
@@ -148,6 +151,7 @@ def test_authorized_dynamic_plan_requires_scanned_typed_entrypoint():
         _script_artifact(),
         base_image="waingro-base.qcow2",
         base_image_sha256="c" * 64,
+        host_policy_sha256=HOST_POLICY_DIGEST,
         authorize_execution=True,
         interpreter="python",
         entrypoint="scripts/run.py",
@@ -163,6 +167,7 @@ def test_authorized_dynamic_plan_requires_scanned_typed_entrypoint():
             _script_artifact(),
             base_image="waingro-base.qcow2",
             base_image_sha256="c" * 64,
+            host_policy_sha256=HOST_POLICY_DIGEST,
             authorize_execution=True,
             interpreter="python",
             entrypoint="scripts/missing.py",
@@ -175,6 +180,7 @@ def test_dynamic_plan_binds_prerequisites_canaries_and_coverage():
         _script_artifact(),
         base_image="waingro-base.qcow2",
         base_image_sha256="c" * 64,
+        host_policy_sha256=HOST_POLICY_DIGEST,
         authorize_execution=True,
         interpreter="python",
         entrypoint="scripts/run.py",
@@ -193,12 +199,70 @@ def test_dynamic_plan_binds_prerequisites_canaries_and_coverage():
     }
 
 
+def test_dynamic_plan_requires_policy_and_a_separate_corpus_gate():
+    with pytest.raises(ValueError, match="host policy"):
+        build_dynamic_plan(
+            _script_artifact(),
+            base_image="waingro-base.qcow2",
+            base_image_sha256="c" * 64,
+            authorize_execution=True,
+            interpreter="python",
+            entrypoint="scripts/run.py",
+            required_event_types=("process",),
+        )
+    with pytest.raises(ValueError, match="separate explicit authorization"):
+        build_dynamic_plan(
+            _script_artifact(),
+            base_image="waingro-base.qcow2",
+            base_image_sha256="c" * 64,
+            host_policy_sha256=HOST_POLICY_DIGEST,
+            specimen_class="corpus",
+            authorize_execution=True,
+            interpreter="python",
+            entrypoint="scripts/run.py",
+            required_event_types=("process",),
+        )
+    plan = build_dynamic_plan(
+        _script_artifact(),
+        base_image="waingro-base.qcow2",
+        base_image_sha256="c" * 64,
+        host_policy_sha256=HOST_POLICY_DIGEST,
+        campaign_id="clawhub-2026-09",
+        specimen_class="corpus",
+        authorize_corpus=True,
+        authorize_execution=True,
+        interpreter="python",
+        entrypoint="scripts/run.py",
+        required_event_types=("process",),
+    )
+    assert plan.schema_version == "1.2"
+    assert plan.corpus_authorized is True
+
+
+def test_fixture_policy_never_authorizes_a_corpus_artifact():
+    policy = HostPolicy(
+        host="hanna2",
+        runner_user="waingro-runner",
+        dedicated=True,
+        corpus_execution_enabled=False,
+        campaign_id="fixture-validation",
+        allowed_artifact_sha256=(),
+        allowed_network_policies=("none", "loopback-sinkhole"),
+        egress_marker=Path("/run/waingro/egress-locked"),
+        policy_sha256=HOST_POLICY_DIGEST,
+    )
+
+    assert policy.authorizes("fixture", "a" * 64, "fixture-validation") is True
+    assert policy.authorizes("corpus", "a" * 64, "fixture-validation") is False
+
+
 def test_authorized_dynamic_plan_requires_explicit_coverage():
     with pytest.raises(ValueError, match="coverage event"):
         build_dynamic_plan(
             _script_artifact(),
             base_image="waingro-base.qcow2",
             base_image_sha256="c" * 64,
+            host_policy_sha256=HOST_POLICY_DIGEST,
             authorize_execution=True,
             interpreter="python",
             entrypoint="scripts/run.py",
@@ -281,6 +345,48 @@ def test_runtime_trace_never_counts_timeout_as_complete_coverage(tmp_path):
     trace = load_runtime_trace(path, expected_artifact_sha256="a" * 64)
     assert trace.coverage is not None
     assert trace.coverage.complete is False
+
+
+def test_runtime_trace_v12_binds_host_policy_and_rejects_an_external_interface(
+    tmp_path,
+):
+    raw = _trace()
+    raw["schema_version"] = "1.2"
+    raw["exit_status"] = "exit-0"
+    raw["isolation"]["external_network_interfaces"] = []
+    raw["isolation"]["sinkhole_local"] = False
+    raw["coverage"] = {
+        "required_event_types": ["process"],
+        "observed_event_types": ["process"],
+        "missing_event_types": [],
+        "require_exit_zero": True,
+        "exit_status_satisfied": True,
+        "complete": True,
+    }
+    raw["harness"] = {
+        "campaign_id": "fixture-validation",
+        "specimen_class": "fixture",
+        "host_policy_sha256": HOST_POLICY_DIGEST,
+    }
+    path = tmp_path / "trace.json"
+    path.write_text(json.dumps(raw), encoding="utf-8")
+
+    trace = load_runtime_trace(
+        path,
+        expected_artifact_sha256="a" * 64,
+        expected_host_policy_sha256=HOST_POLICY_DIGEST,
+    )
+    assert trace.host_policy_verified is True
+    assert trace.isolation.valid is True
+
+    raw["isolation"]["external_network_interfaces"] = ["ens3"]
+    path.write_text(json.dumps(raw), encoding="utf-8")
+    trace = load_runtime_trace(
+        path,
+        expected_artifact_sha256="a" * 64,
+        expected_host_policy_sha256=HOST_POLICY_DIGEST,
+    )
+    assert trace.isolation.valid is False
 
 
 def test_runtime_trace_binds_to_artifact_and_is_untrusted_without_signature(tmp_path):
@@ -405,6 +511,7 @@ def test_runner_plan_loader_and_domain_xml_have_no_host_share_or_default_network
         _script_artifact(),
         base_image="waingro-base.qcow2",
         base_image_sha256="c" * 64,
+        host_policy_sha256=HOST_POLICY_DIGEST,
         authorize_execution=True,
         interpreter="python",
         entrypoint="scripts/run.py",
@@ -427,6 +534,19 @@ def test_runner_plan_loader_and_domain_xml_have_no_host_share_or_default_network
     assert "<readonly" in xml
     assert "model=\"selinux\"" in xml
     assert "<serial type=\"pty\"" in xml
+    assert "device=\"cdrom\"" not in xml
+    assert "dev=\"vdb\" bus=\"virtio\"" in xml
+    assert "model=\"none\"" in xml
+    assert "qemu:commandline" in xml
+    assert "elevateprivileges=deny" in xml
+
+
+def test_sparse_overlay_limit_uses_allocated_blocks(tmp_path):
+    overlay = tmp_path / "overlay.qcow2"
+    with overlay.open("wb") as handle:
+        handle.truncate(8 * 1024 * 1024 * 1024)
+
+    assert _allocated_bytes(overlay) < overlay.stat().st_size
 
 
 def test_runner_plan_loader_rejects_tampered_artifact_inventory(tmp_path):
@@ -434,6 +554,7 @@ def test_runner_plan_loader_rejects_tampered_artifact_inventory(tmp_path):
         _script_artifact(),
         base_image="waingro-base.qcow2",
         base_image_sha256="c" * 64,
+        host_policy_sha256=HOST_POLICY_DIGEST,
         authorize_execution=True,
         interpreter="python",
         entrypoint="scripts/run.py",
@@ -471,6 +592,7 @@ def test_benign_runtime_fixture_produces_an_authorized_plan():
         result.artifact_identity,
         base_image="waingro-fedora43.qcow2",
         base_image_sha256="c" * 64,
+        host_policy_sha256=HOST_POLICY_DIGEST,
         authorize_execution=True,
         interpreter="python",
         entrypoint="scripts/run.py",
@@ -488,6 +610,7 @@ def test_adversarial_runtime_fixture_produces_an_artifact_bound_plan():
         result.artifact_identity,
         base_image="waingro-fedora43.qcow2",
         base_image_sha256="c" * 64,
+        host_policy_sha256=HOST_POLICY_DIGEST,
         network_policy="none",
         authorize_execution=True,
         interpreter="python",
@@ -503,3 +626,13 @@ def test_guest_telemetry_ignores_local_ipc_and_identifies_dns():
     assert _connect_event_type('connect(3, {sa_family=AF_UNIX, sun_path="/dev/log"})') is None
     assert _connect_event_type("connect(3, {sa_family=AF_INET, sin_port=htons(443)})") == "network"
     assert _connect_event_type("connect(3, {sa_family=AF_INET6, sin6_port=htons(53)})") == "dns"
+
+
+def test_loopback_sinkhole_dns_parser_extracts_only_a_bounded_query():
+    query = (
+        b"\x12\x34\x01\x00\x00\x01\x00\x00\x00\x00\x00\x00"
+        b"\x07example\x03com\x00\x00\x01\x00\x01"
+    )
+
+    assert _dns_name(query) == ("example.com", 1, len(query))
+    assert _dns_name(b"short") is None

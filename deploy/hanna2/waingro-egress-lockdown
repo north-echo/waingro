@@ -1,0 +1,39 @@
+#!/usr/bin/bash
+set -euo pipefail
+
+POLICY=/etc/waingro/host-policy.json
+RULESET=/etc/waingro/egress-lockdown.nft
+RUNTIME_DIR=/run/waingro
+MARKER=${RUNTIME_DIR}/egress-locked
+
+case "${1:-}" in
+    start)
+        test "$(hostname -s)" = "hanna2"
+        test -r "${POLICY}"
+        test -r "${RULESET}"
+        /usr/sbin/nft delete table inet waingro_lockdown 2>/dev/null || true
+        /usr/sbin/nft -f "${RULESET}"
+        /usr/bin/install -d -o root -g root -m 0700 "${RUNTIME_DIR}"
+        policy_sha=$(/usr/bin/sha256sum "${POLICY}" | /usr/bin/cut -d ' ' -f 1)
+        boot_id=$(/usr/bin/tr -d '\n' </proc/sys/kernel/random/boot_id)
+        temporary=$(/usr/bin/mktemp "${RUNTIME_DIR}/egress-locked.XXXXXX")
+        /usr/bin/printf \
+            '{"schema_version":"1.0","locked":true,"policy_sha256":"%s","boot_id":"%s"}\n' \
+            "${policy_sha}" "${boot_id}" >"${temporary}"
+        /usr/bin/chown root:root "${temporary}"
+        /usr/bin/chmod 0600 "${temporary}"
+        /usr/bin/mv -f "${temporary}" "${MARKER}"
+        ;;
+    stop)
+        /usr/bin/rm -f "${MARKER}"
+        /usr/sbin/nft delete table inet waingro_lockdown 2>/dev/null || true
+        ;;
+    status)
+        test -f "${MARKER}"
+        /usr/sbin/nft list table inet waingro_lockdown >/dev/null
+        ;;
+    *)
+        /usr/bin/printf 'usage: %s {start|stop|status}\n' "$0" >&2
+        exit 64
+        ;;
+esac

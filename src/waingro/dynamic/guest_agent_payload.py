@@ -13,9 +13,13 @@ import json
 import os
 import pwd
 import re
+import resource
 import shutil
 import signal
+import socket
+import struct
 import subprocess
+import threading
 import time
 from datetime import UTC, datetime
 from pathlib import Path
@@ -25,6 +29,10 @@ CANDIDATE = Path("/opt/waingro/candidate")
 TRACE_DIR = Path("/run/waingro-trace")
 MAX_EVENTS = 100_000
 MAX_TRACE_BYTES = 20 * 1024 * 1024
+MAX_CANDIDATE_OUTPUT_BYTES = 8 * 1024 * 1024
+MAX_STRACE_BYTES = 64 * 1024 * 1024
+_SINKHOLE_EVENTS: list[dict] = []
+_SINKHOLE_LOCK = threading.Lock()
 
 
 def _now() -> str:
@@ -84,16 +92,16 @@ def _copy_candidate(plan: dict) -> None:
         with source.open("rb") as reader, destination.open("xb") as writer:
             shutil.copyfileobj(reader, writer, length=1024 * 1024)
         destination.chmod(0o444)
-    account = pwd.getpwnam("waingro")
     for directory, dirs, files in os.walk(CANDIDATE):
         Path(directory).chmod(0o555)
-        os.chown(directory, account.pw_uid, account.pw_gid)
         for name in dirs:
             child = Path(directory) / name
             child.chmod(0o555)
-            os.chown(child, account.pw_uid, account.pw_gid)
         for name in files:
-            os.chown(Path(directory) / name, account.pw_uid, account.pw_gid)
+            child = Path(directory) / name
+            child.chmod(0o444)
+            os.chown(child, 0, 0)
+        os.chown(directory, 0, 0)
 
 
 def _synthetic_value(name: str, profile: str) -> str:
@@ -161,6 +169,136 @@ def _validate_guest_contract(plan: dict) -> None:
         raise RuntimeError("base image lacks required executables: " + ", ".join(missing))
 
 
+def _record_sinkhole_event(event: dict) -> None:
+    with _SINKHOLE_LOCK:
+        if len(_SINKHOLE_EVENTS) < MAX_EVENTS:
+            _SINKHOLE_EVENTS.append(event)
+
+
+def _dns_name(payload: bytes) -> tuple[str, int, int] | None:
+    if len(payload) < 17:
+        return None
+    labels = []
+    offset = 12
+    while offset < len(payload):
+        size = payload[offset]
+        offset += 1
+        if size == 0:
+            break
+        if size > 63 or offset + size > len(payload):
+            return None
+        labels.append(payload[offset : offset + size].decode("ascii", errors="replace"))
+        offset += size
+    if not labels or offset + 4 > len(payload):
+        return None
+    query_type = int.from_bytes(payload[offset : offset + 2], "big")
+    return ".".join(labels)[:253], query_type, offset + 4
+
+
+def _dns_sinkhole(server: socket.socket) -> None:
+    while True:
+        try:
+            payload, peer = server.recvfrom(4096)
+            parsed = _dns_name(payload)
+            if parsed is None:
+                continue
+            name, query_type, question_end = parsed
+            _record_sinkhole_event(_event(
+                "dns",
+                "sinkhole-query",
+                0,
+                destination=name,
+                labels=["loopback-sinkhole"],
+            ))
+            answer = b""
+            if query_type == 1:
+                answer = b"\xc0\x0c" + struct.pack("!HHIH", 1, 1, 0, 4) + b"\x7f\x00\x00\x01"
+            elif query_type == 28:
+                answer = b"\xc0\x0c" + struct.pack("!HHIH", 28, 1, 0, 16) + (b"\x00" * 15) + b"\x01"
+            flags = b"\x81\x80"
+            counts = b"\x00\x01" + (b"\x00\x01" if answer else b"\x00\x00") + b"\x00\x00\x00\x00"
+            server.sendto(payload[:2] + flags + counts + payload[12:question_end] + answer, peer)
+        except OSError:
+            return
+
+
+def _http_sinkhole(server: socket.socket, *, tls: bool = False) -> None:
+    while True:
+        try:
+            connection, _peer = server.accept()
+        except OSError:
+            return
+        with connection:
+            connection.settimeout(1)
+            try:
+                payload = connection.recv(64 * 1024)
+            except OSError:
+                payload = b""
+            labels = ["loopback-sinkhole"]
+            if b"WAINGRO_CANARY_" in payload or b"WAINGRO_SYNTHETIC_" in payload:
+                labels.append("synthetic-canary")
+            destination = "127.0.0.1:443" if tls else "127.0.0.1:80"
+            target = "tls-client-hello" if tls else "http-request"
+            if not tls:
+                text = payload.decode("iso-8859-1", errors="replace")
+                lines = text.splitlines()
+                if lines:
+                    parts = lines[0].split()
+                    if len(parts) >= 2:
+                        target = parts[1][:2048]
+                for line in lines[1:]:
+                    name, separator, value = line.partition(":")
+                    if separator and name.lower() == "host":
+                        destination = value.strip()[:253]
+                        break
+            _record_sinkhole_event(_event(
+                "network",
+                "sinkhole-connect" if tls else "sinkhole-request",
+                0,
+                target=target,
+                destination=destination,
+                labels=labels,
+            ))
+            if not tls:
+                try:  # noqa: SIM105 -- this file is copied into a minimal guest image.
+                    connection.sendall(b"HTTP/1.1 204 No Content\r\nConnection: close\r\n\r\n")
+                except OSError:
+                    pass
+
+
+def _start_loopback_sinkhole(plan: dict) -> None:
+    if plan["execution"]["network_policy"] != "loopback-sinkhole":
+        return
+    resolver = Path("/etc/resolv.conf")
+    if resolver.is_symlink():
+        resolver.unlink()
+    resolver.write_text("nameserver 127.0.0.1\noptions attempts:1 timeout:1\n", encoding="ascii")
+    listeners = []
+    udp = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    udp.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    udp.bind(("127.0.0.1", 53))
+    listeners.append((udp, _dns_sinkhole, {}))
+    for port, tls in ((80, False), (443, True)):
+        tcp = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        tcp.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        tcp.bind(("127.0.0.1", port))
+        tcp.listen(16)
+        listeners.append((tcp, _http_sinkhole, {"tls": tls}))
+    for listener, target, kwargs in listeners:
+        threading.Thread(target=target, args=(listener,), kwargs=kwargs, daemon=True).start()
+
+
+def _limit_candidate() -> None:
+    os.umask(0o077)
+    resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
+    resource.setrlimit(
+        resource.RLIMIT_FSIZE,
+        (MAX_CANDIDATE_OUTPUT_BYTES, MAX_CANDIDATE_OUTPUT_BYTES),
+    )
+    resource.setrlimit(resource.RLIMIT_NOFILE, (256, 256))
+    resource.setrlimit(resource.RLIMIT_NPROC, (128, 128))
+
+
 def _argv(plan: dict) -> list[str]:
     scenario = plan["execution"].get("scenario")
     if not plan["execution"].get("authorized") or not isinstance(scenario, dict):
@@ -218,14 +356,24 @@ def _run(plan: dict, argv: list[str], environment: dict[str, str]) -> tuple[str,
             stdout=handle,
             stderr=subprocess.STDOUT,
             start_new_session=True,
+            preexec_fn=_limit_candidate,  # noqa: S606 -- guest-only resource boundary.
         )
-        try:
-            return_code = process.wait(timeout=timeout)
-            return f"exit-{return_code}", _hash(output)
-        except subprocess.TimeoutExpired:
+        deadline = time.monotonic() + timeout
+        status = "completed"
+        while process.poll() is None:
+            if time.monotonic() >= deadline:
+                status = "timeout"
+                break
+            trace_bytes = sum(path.stat().st_size for path in TRACE_DIR.glob("strace.*"))
+            if trace_bytes > MAX_STRACE_BYTES or output.stat().st_size > MAX_CANDIDATE_OUTPUT_BYTES:
+                status = "resource-limit"
+                break
+            time.sleep(0.1)
+        if status != "completed":
             os.killpg(process.pid, signal.SIGKILL)
             process.wait(timeout=10)
-            return "timeout", _hash(output)
+            return status, _hash(output)
+        return f"exit-{process.returncode}", _hash(output)
 
 
 def _event(
@@ -325,6 +473,8 @@ def _parse_events() -> list[dict]:
                     event_type, "write", pid, timestamp=timestamp,
                     parent_process_id=parents.get(pid), success=success, target=target,
                 ))
+    with _SINKHOLE_LOCK:
+        events.extend(_SINKHOLE_EVENTS[: max(0, MAX_EVENTS - len(events))])
     return events
 
 
@@ -361,6 +511,7 @@ def main() -> None:
         _copy_candidate(plan)
         _validate_guest_contract(plan)
         environment = _synthetic_home(plan)
+        _start_loopback_sinkhole(plan)
         exit_status, output_sha256 = _run(plan, _argv(plan), environment)
         events = _parse_events()
     except Exception as exc:  # Guest errors must still produce a bounded receipt.
@@ -378,7 +529,7 @@ def main() -> None:
         not require_exit_zero or exit_status == "exit-0"
     )
     trace = {
-        "schema_version": "1.1",
+        "schema_version": "1.2",
         "run_id": run_id,
         "artifact_sha256": artifact_sha256,
         "host": "hanna2",
@@ -393,6 +544,10 @@ def main() -> None:
             "host_shares": False,
             "host_credentials": False,
             "network_policy": network_policy,
+            "external_network_interfaces": sorted(
+                path.name for path in Path("/sys/class/net").iterdir() if path.name != "lo"
+            ),
+            "sinkhole_local": network_policy == "loopback-sinkhole",
             "base_image_sha256": base_sha256,
             "candidate_read_only": True,
         },
@@ -409,6 +564,19 @@ def main() -> None:
             "error": error,
             "candidate_output_sha256": output_sha256,
             "event_count": len(events),
+            "campaign_id": (
+                plan.get("execution", {}).get("campaign_id") if "plan" in locals() else None
+            ),
+            "specimen_class": (
+                plan.get("execution", {}).get("specimen_class")
+                if "plan" in locals()
+                else None
+            ),
+            "host_policy_sha256": (
+                plan.get("execution", {}).get("host_policy_sha256")
+                if "plan" in locals()
+                else None
+            ),
         },
     }
     _emit(trace)

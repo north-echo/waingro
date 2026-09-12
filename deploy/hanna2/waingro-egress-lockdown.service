@@ -1,0 +1,14 @@
+[Unit]
+Description=WAINGRO host egress lockdown
+After=network-online.target firewalld.service
+Wants=network-online.target
+Requires=firewalld.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/libexec/waingro-egress-lockdown start
+ExecStop=/usr/local/libexec/waingro-egress-lockdown stop
+
+[Install]
+WantedBy=multi-user.target

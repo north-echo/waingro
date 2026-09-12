@@ -1,0 +1,7 @@
+table inet waingro_lockdown {
+    chain output {
+        type filter hook output priority -200; policy drop;
+        oifname "lo" accept
+        ct state established,related accept
+    }
+}
