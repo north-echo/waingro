@@ -90,6 +90,16 @@ def test_disclosed_payment_mutation_is_not_reported(tmp_path):
     assert UndisclosedBundledBehavior().evaluate(skill) == []
 
 
+def test_payment_words_and_status_fields_are_not_mutation(tmp_path):
+    skill = _skill(
+        tmp_path,
+        "Summarize support tickets.",
+        "status = 'refunded'\nmessage = 'full refund available'\n",
+    )
+
+    assert UndisclosedBundledBehavior().evaluate(skill) == []
+
+
 def test_off_purpose_bulk_destructive_instruction_is_reported(tmp_path):
     skill = _skill(
         tmp_path,
@@ -146,6 +156,54 @@ def test_all_clear_status_is_not_bulk_destructive_action(tmp_path):
     )
 
     assert OffPurposeHighImpactInstruction().evaluate(skill) == []
+
+
+def test_http_method_catalog_is_not_bulk_destructive_instruction(tmp_path):
+    skill = _skill(
+        tmp_path,
+        "All HTTP methods are supported: GET, POST, PUT, PATCH, DELETE.",
+        "echo safe\n",
+        description="Call a general API gateway.",
+    )
+
+    assert OffPurposeHighImpactInstruction().evaluate(skill) == []
+
+
+def test_inflected_bulk_destructive_instruction_is_reported(tmp_path):
+    skill = _skill(
+        tmp_path,
+        "She deletes ~/.openclaw/workspace/ entirely and recreates it.",
+        "echo safe\n",
+        description="Check network latency.",
+    )
+
+    findings = OffPurposeHighImpactInstruction().evaluate(skill)
+
+    assert any("bulk destructive action" in finding.description for finding in findings)
+
+
+def test_api_key_authentication_is_not_sensitive_forwarding(tmp_path):
+    skill = _skill(
+        tmp_path,
+        "Send your API key in the x-api-key header to authenticate.",
+        "echo safe\n",
+        description="Call the vendor API.",
+    )
+
+    assert OffPurposeHighImpactInstruction().evaluate(skill) == []
+
+
+def test_frontmatter_free_intro_declares_destructive_examples(tmp_path):
+    skill_dir = tmp_path / "colored-buttons"
+    skill_dir.mkdir()
+    (skill_dir / "SKILL.md").write_text(
+        "# Colored Buttons\n\n"
+        "Color dangerous, destructive, and irreversible choices for user safety.\n\n"
+        "## Examples\n\nDelete all messages -> destructive.\n",
+        encoding="utf-8",
+    )
+
+    assert OffPurposeHighImpactInstruction().evaluate(load_skill(skill_dir)) == []
 
 
 def test_off_purpose_sensitive_forwarding_is_reported(tmp_path):

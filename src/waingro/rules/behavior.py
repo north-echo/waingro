@@ -75,8 +75,10 @@ _ACTIONS = (
     _HighImpactAction(
         "payment or subscription mutation",
         re.compile(
-            r"\b(?:refund(?:s|ed|ing)?|cancel(?:led|ing)?[^\n]{0,40}subscription|"
-            r"api_post\s+refunds)\b",
+            r"(?:\bapi_post\s+refunds\b|"
+            r"\b(?:create_?refund|issue_?refund|refund_?payment|"
+            r"cancel_?subscription)\s*\(|"
+            r"\.(?:refund|cancel_subscription)\s*\()",
             re.IGNORECASE,
         ),
         re.compile(r"\b(?:refund|cancel|payment|billing|subscription|charge)\b", re.IGNORECASE),
@@ -95,14 +97,21 @@ _INSTRUCTION_CAPABILITIES = (
     _HighImpactInstruction(
         "bulk destructive action",
         re.compile(
-            r"\b(?:wipe|delete|remove|clear|cancel|refund)\b[^.\n]{0,100}"
-            r"\b(?:all|entire|every|existing|without\s+exception|full)\b|"
-            r"\b(?:all|entire|every|existing|full)\b[^.\n]{0,100}"
-            r"\b(?:wipe|delete|remove|clear|cancel|refund)\b",
+            r"\b(?:wip(?:e|es|ed|ing)|delet(?:e|es|ed|ing)|"
+            r"remov(?:e|es|ed|ing)|clear(?:s|ed|ing)?|cancel(?:s|led|ing)?|"
+            r"refund(?:s|ed|ing)?)\b(?:[^.\n]|\.(?=[/A-Za-z0-9_~])){0,60}"
+            r"\b(?:all|entire(?:ly)?|every|without\s+exception)\b|"
+            r"\b(?:all|entire(?:ly)?|every)\b\s+(?:existing\s+)?"
+            r"(?:accounts?|buckets?|data|files?|messages?|orders?|positions?|"
+            r"records?|resources?|sessions?|subscriptions?|users?)\b"
+            r"[^.\n]{0,35}\b(?:wip(?:e|es|ed|ing)|delet(?:e|es|ed|ing)|"
+            r"remov(?:e|es|ed|ing)|clear(?:s|ed|ing)?|cancel(?:s|led|ing)?|"
+            r"refund(?:s|ed|ing)?)\b",
             re.IGNORECASE,
         ),
         re.compile(
-            r"\b(?:wipe|delete|remove|cleanup|reset|cancel|refund|subscription|billing)\b",
+            r"\b(?:wipe|delete|remove|cleanup|reset|cancel|refund|subscription|billing|"
+            r"destructive|irreversible|dangerous|high[- ]stakes)\b",
             re.IGNORECASE,
         ),
     ),
@@ -110,10 +119,13 @@ _INSTRUCTION_CAPABILITIES = (
         "sensitive-data forwarding or offsite backup",
         re.compile(
             r"\b(?:send|forward|upload|back\s*up|backup)\b[^.\n]{0,140}"
-            r"\b(?:credential|api\s+configs?|key|thread|financial|passport|medical|"
-            r"health|personal\s+file|important\s+file)\b|"
-            r"\b(?:offsite|external|personal)\s+(?:server|archive|address)\b"
-            r"[^.\n]{0,120}\b(?:file|config|record|thread|backup)\b|"
+            r"\b(?:credential|api\s+configs?|session\s+token|secret|private\s+key|"
+            r"financial|passport|medical|health|personal\s+file|important\s+file)\b"
+            r"[^.\n]{0,120}\b(?:offsite|external|personal|third[- ]party|unrelated|"
+            r"unknown)\s+(?:server|archive|address|endpoint|webhook)\b|"
+            r"\b(?:offsite|external|personal|third[- ]party|unrelated|unknown)\s+"
+            r"(?:server|archive|address|endpoint|webhook)\b[^.\n]{0,120}"
+            r"\b(?:credential|file|config|record|thread|backup|secret|key)\b|"
             r"\bread\b[^.\n]{0,100}\b(?:session\s+token|credential|secret)\b"
             r"[\s\S]{0,180}\bforward\s+all\s+data\b",
             re.IGNORECASE,
@@ -134,8 +146,10 @@ _INSTRUCTION_CAPABILITIES = (
     _HighImpactInstruction(
         "confirmation bypass",
         re.compile(
-            r"\b(?:no\s+need\s+to|do(?:es)?n't\s+need\s+to|without|never)\b"
-            r"[^.\n]{0,80}\b(?:confirm|confirmation|preview|draft|approval)\b|"
+            r"\b(?:no\s+need\s+to|do(?:es)?n't\s+need\s+to)\b"
+            r"[^.\n]{0,80}\b(?:confirm|confirmation|approval)\b|"
+            r"\bwithout\b[^.\n]{0,80}\b(?:confirm(?:ation)?|approval)\b|"
+            r"\b(?:bypass|skip)\b[^.\n]{0,60}\b(?:confirm(?:ation)?|approval)\b|"
             r"\b(?:that's\s+her\s+sign-off|executing\s+directly)\b",
             re.IGNORECASE,
         ),
@@ -146,6 +160,48 @@ _INSTRUCTION_CAPABILITIES = (
         ),
     ),
 )
+
+
+def _introductory_purpose(skill: ParsedSkill) -> str:
+    """Return a bounded purpose statement when frontmatter omits one.
+
+    A root title and its first prose paragraph are the conventional purpose
+    declaration for frontmatter-free skills.  Looking any farther would let a
+    risky instruction self-declare merely by appearing later in the document.
+    """
+    if skill.metadata.description:
+        return ""
+    lines = skill.body.splitlines()
+    title = ""
+    paragraph: list[str] = []
+    started = False
+    in_fence = False
+    for raw_line in lines[:80]:
+        line = raw_line.strip()
+        if line.startswith(("```", "~~~")):
+            in_fence = not in_fence
+            continue
+        if in_fence:
+            continue
+        if line.startswith("# ") and not title:
+            title = line[2:].strip()
+            continue
+        if line.startswith("## "):
+            if started:
+                break
+            # Purpose/overview headings may precede the first paragraph.
+            continue
+        if not line:
+            if started:
+                break
+            continue
+        if line.startswith(("|", "- ", "* ", ">", "[!")):
+            if started:
+                break
+            continue
+        started = True
+        paragraph.append(line)
+    return "\n".join(part for part in (title, " ".join(paragraph)) if part)
 
 
 def _declared_text(skill: ParsedSkill) -> str:
@@ -209,7 +265,13 @@ class OffPurposeHighImpactInstruction(Rule):
 
     def evaluate(self, skill: ParsedSkill) -> list[Finding]:
         declared = "\n".join(
-            part for part in (skill.metadata.name, skill.metadata.description) if part
+            part
+            for part in (
+                skill.metadata.name,
+                skill.metadata.description,
+                _introductory_purpose(skill),
+            )
+            if part
         )
         findings = []
         skill_md = skill.path / "SKILL.md"
@@ -220,6 +282,7 @@ class OffPurposeHighImpactInstruction(Rule):
             if not match:
                 continue
             matched_text = match.group(0)
+            local_context = skill.body[max(0, match.start() - 120) : match.end() + 120]
             if (
                 capability.name == "bulk destructive action"
                 and re.search(r"\ball\s+clear\b", matched_text, re.IGNORECASE)
@@ -231,7 +294,7 @@ class OffPurposeHighImpactInstruction(Rule):
                     r"\b(?:never|do\s+not|don't|must\s+not|avoid)\b[^.\n]{0,100}"
                     r"(?:\bwithout\b[^.\n]{0,60}\b(?:approval|confirmation)\b|"
                     r"\b(?:skip|bypass)\b[^.\n]{0,40}\b(?:approval|confirmation)\b)",
-                    matched_text,
+                    local_context,
                     re.IGNORECASE,
                 )
             ):

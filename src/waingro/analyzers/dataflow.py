@@ -248,6 +248,15 @@ def _statement_bounds(lines: list[str], index: int) -> tuple[int, int]:
     # A decode call commonly starts on a continuation line. Walk back while the
     # preceding text has an unmatched opening delimiter or explicit continuation.
     for candidate in range(index - 1, max(-1, index - 30), -1):
+        # Once a multiline expression opener has been found, do not absorb a
+        # preceding control-flow block merely because the expression has not
+        # closed yet at the finding line.  Crossing that boundary can join a
+        # sink from an earlier function or branch to an unrelated source.
+        if start < index and (
+            not lines[candidate].strip()
+            or lines[candidate].rstrip().endswith(":")
+        ):
+            break
         prefix = "\n".join(lines[candidate : index + 1])
         if (
             prefix.count("(") > prefix.count(")")

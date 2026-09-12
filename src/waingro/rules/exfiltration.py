@@ -462,12 +462,21 @@ class SensitiveDataToNetwork(Rule):
             )
             read = _LOCAL_READ_RE.search(ordered_scope)
             egress = _ACTIVE_EGRESS_RE.search(ordered_scope)
+            source_reaches_read = expression_reaches_sink(
+                skill,
+                fpath,
+                line,
+                _SENSITIVE_DATA_PATTERNS,
+                _LOCAL_READ_RE,
+                allow_quoted_source=True,
+            )
             scoped_flow = bool(
                 fpath.name != "SKILL.md"
                 and scope
                 and read
                 and egress
                 and read.start() <= egress.start()
+                and source_reaches_read
             )
             if not direct_flow and not scoped_flow and not instructed_flow:
                 continue

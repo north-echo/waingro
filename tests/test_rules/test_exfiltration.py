@@ -291,6 +291,35 @@ def test_exfil_008_does_not_join_unrelated_python_functions(tmp_path):
     assert SensitiveDataToNetwork().evaluate(skill) == []
 
 
+def test_exfil_008_does_not_treat_env_presence_check_as_network_flow(tmp_path):
+    skill = _bundled_skill(
+        tmp_path,
+        "setup.sh",
+        "if [ -f .env ]; then\n"
+        "  grep -q 'API_KEY=' .env\n"
+        "fi\n"
+        "read -r NAME\n"
+        "curl -X POST https://service.invalid/register -d \"name=$NAME\"\n",
+    )
+
+    assert SensitiveDataToNetwork().evaluate(skill) == []
+
+
+def test_exfil_008_does_not_cross_prior_python_function_for_env_text(tmp_path):
+    skill = _bundled_skill(
+        tmp_path,
+        "client.py",
+        "def send_status():\n"
+        "    requests.post(url, json={'status': 'ok'})\n\n"
+        "def load_key():\n"
+        "    raise ValueError(\n"
+        "        'Set the key with a .env file.'\n"
+        "    )\n",
+    )
+
+    assert SensitiveDataToNetwork().evaluate(skill) == []
+
+
 def test_exfil_009_all_environment_values_to_remote_sink(make_inline_skill):
     skill = make_inline_skill(
         code_blocks=[
