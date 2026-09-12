@@ -97,12 +97,25 @@ _INSTRUCTION_CAPABILITIES = (
     _HighImpactInstruction(
         "bulk destructive action",
         re.compile(
-            r"\b(?:wipe|delete|remove|clear|cancel|refund)\b"
-            r"(?:[^.\n]|\.(?=[/A-Za-z0-9_~])){0,60}"
-            r"\b(?:all|entire(?:ly)?|every|without\s+exception)\b|"
-            r"\b(?:all|entire(?:ly)?|every)\b\s+(?:existing\s+)?"
-            r"(?:accounts?|buckets?|data|files?|messages?|orders?|positions?|"
-            r"records?|resources?|sessions?|subscriptions?|users?)\b"
+            r"\b(?:wipe|delete|remove|clear|cancel|refund)\b[^.\n]{0,35}"
+            r"\b(?:all|every|without\s+exception)\b[^.\n]{0,30}"
+            r"\b(?:accounts?|addresses?|buckets?|caches?|charges?|cookies?|data|"
+            r"emails?|files?|messages?|orders?|payments?|pods?|positions?|profiles?|"
+            r"records?|repositories?|"
+            r"resources?|sessions?|subscriptions?|tasks?|users?)\b|"
+            r"\b(?:wipe|delete|remove|clear|cancel|refund)\b[^.\n]{0,25}"
+            r"\b(?:the\s+)?(?:entire|whole)\b[^.\n]{0,25}"
+            r"\b(?:account|database|dataset|disk|drive|filesystem|home\s+directory|"
+            r"inbox|profile|repository|workspace)\b|"
+            r"\b(?:wipe|delete|remove|clear|cancel|refund)\b[^.\n]{0,25}"
+            r"\b(?:accounts?|buckets?|charges?|files?|messages?|orders?|payments?|"
+            r"pods?|positions?|"
+            r"records?|resources?|sessions?|subscriptions?|tasks?|users?)\b"
+            r"[^.\n]{0,20}(?:--all\b|\b(?:all|every)\b)|"
+            r"\b(?:all|every)\b\s+(?:existing\s+|open\s+)?"
+            r"(?:accounts?|buckets?|charges?|data|files?|messages?|orders?|payments?|"
+            r"pods?|positions?|"
+            r"records?|resources?|sessions?|subscriptions?|tasks?|users?)\b"
             r"[^.\n]{0,35}\b(?:wipe|delete|remove|clear|cancel|refund)\b|"
             r"\b(?:deletes?|wipes?|clears?)\b"
             r"(?:[^.\n]|\.(?=[/A-Za-z0-9_~])){0,45}"
@@ -210,9 +223,7 @@ def _introductory_purpose(skill: ParsedSkill) -> str:
 
 def _declared_text(skill: ParsedSkill) -> str:
     return "\n".join(
-        part
-        for part in (skill.metadata.name, skill.metadata.description, skill.body)
-        if part
+        part for part in (skill.metadata.name, skill.metadata.description, skill.body) if part
     )
 
 
@@ -287,20 +298,25 @@ class OffPurposeHighImpactInstruction(Rule):
                 continue
             matched_text = match.group(0)
             local_context = skill.body[max(0, match.start() - 120) : match.end() + 120]
-            if (
-                capability.name == "bulk destructive action"
-                and re.search(r"\ball\s+clear\b", matched_text, re.IGNORECASE)
+            if capability.name == "bulk destructive action" and re.search(
+                r"\ball\s+clear\b", matched_text, re.IGNORECASE
             ):
                 continue
-            if (
-                capability.name == "confirmation bypass"
-                and re.search(
-                    r"\b(?:never|do\s+not|don't|must\s+not|avoid)\b[^.\n]{0,100}"
-                    r"(?:\bwithout\b[^.\n]{0,60}\b(?:approval|confirmation)\b|"
-                    r"\b(?:skip|bypass)\b[^.\n]{0,40}\b(?:approval|confirmation)\b)",
-                    local_context,
-                    re.IGNORECASE,
-                )
+            if capability.name == "confirmation bypass" and re.search(
+                r"(?:"
+                r"\b(?:never|do\s+not|don't|must\s+not|avoid|refuse)\b"
+                r"[^.\n]{0,100}|"
+                r"\bno\b[^.\n]{0,50}\b(?:may|must|can|should|will)\s+"
+                r"(?:be\s+)?(?:executed?|performed?|placed?|run|sent|submitted?)\b"
+                r"[^.\n]{0,100}|"
+                r"\b(?:may|must|can|should|will)\s+not\s+(?:be\s+)?"
+                r"(?:executed?|performed?|placed?|run|sent|submitted?)\b"
+                r"[^.\n]{0,100}"
+                r")"
+                r"(?:\bwithout\b[^.\n]{0,60}\b(?:approval|confirmation|confirm)\b|"
+                r"\b(?:skip|bypass)\b[^.\n]{0,40}\b(?:approval|confirmation)\b)",
+                local_context,
+                re.IGNORECASE,
             ):
                 continue
             body_line = skill.body.count("\n", 0, match.start()) + 1
@@ -435,8 +451,7 @@ class RemoteTriggeredUnpinnedUpdater(Rule):
         for invocation in find_unpinned_package_runners(skill):
             content = content_by_path[invocation.file_path]
             if not (
-                _REMOTE_UPDATE_CONTROL_RE.search(content)
-                and _INSTALL_MUTATION_RE.search(content)
+                _REMOTE_UPDATE_CONTROL_RE.search(content) and _INSTALL_MUTATION_RE.search(content)
             ):
                 continue
             findings.append(
