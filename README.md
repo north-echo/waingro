@@ -289,6 +289,13 @@ reach `MALICIOUS`, so this is an honest negative with stated static-analysis
 limits, not evidence that ClawHub is malware-free. See the
 [full validation report](research/validation-2026-09-11.md).
 
+WAINGRO 0.9.0 then re-scored the same frozen 79,840-artifact set at commit
+`4ad7431782f1261813b3f1bbf9b922a04937efb7` with the intent-neutral review
+ranking: 744 high, 13,588 medium, 16,776 low, and 48,732 with no review
+priority. Hybrid verdicts were 47,843 CLEAN, 28,611 CAPABILITY, 2,021 REVIEW,
+1,365 SUSPICIOUS, and 0 MALICIOUS. This is a re-score of the frozen corpus, not
+a new acquisition, and a high review priority is not a malware attribution.
+
 ## Threat-intelligence model
 
 WAINGRO treats public intelligence in deliberately different ways:
