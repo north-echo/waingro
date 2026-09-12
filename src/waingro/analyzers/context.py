@@ -185,8 +185,18 @@ def compute_security_tool_score(
     if "security" in metadata_block or "category" in metadata_block:
         score += 0.05
     tags = [t.lower() for t in skill.metadata.tags]
-    if any(t in tags for t in ["security", "audit", "scanner", "detection"]):
-        score += 0.05
+    defensive_tags = {
+        "security",
+        "audit",
+        "scanner",
+        "scanning",
+        "detection",
+        "antivirus",
+        "antimalware",
+        "malware",
+    }
+    tag_hits = len(defensive_tags.intersection(tags))
+    score += min(tag_hits * 0.05, 0.15)
 
     # Structural signals (max +0.35)
     body_lower = skill.body.lower()

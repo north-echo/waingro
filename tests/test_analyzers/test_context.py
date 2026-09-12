@@ -30,7 +30,7 @@ def test_antivirus_identity_crosses_security_review_threshold(make_inline_skill)
         },
     )
 
-    assert compute_security_tool_score(skill, [_make_finding("EXEC-003")]) >= 0.3
+    assert compute_security_tool_score(skill, [_make_finding("EXEC-003")]) >= 0.35
 
 
 def test_security_tool_combined_signals(make_inline_skill):
