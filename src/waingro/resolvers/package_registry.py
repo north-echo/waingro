@@ -12,6 +12,7 @@ import hashlib
 import json
 import re
 import ssl
+import time
 from contextlib import suppress
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -21,6 +22,8 @@ from urllib.parse import quote, urlsplit
 from urllib.request import HTTPRedirectHandler, HTTPSHandler, Request, build_opener
 
 from waingro.models import PackageReference
+from waingro.resolvers.http_safety import retry_after_seconds
+from waingro.resolvers.provenance import ProvenanceVerification
 
 NPM_HOST = "registry.npmjs.org"
 PYPI_HOST = "pypi.org"
@@ -36,6 +39,12 @@ _EXACT_VERSION_RE = re.compile(
 
 class MetadataFetcher(Protocol):
     def __call__(self, url: str) -> dict: ...
+
+
+class ProvenanceVerifier(Protocol):
+    def __call__(
+        self, bundle_data: dict, expected_repository_url: str | None
+    ) -> ProvenanceVerification: ...
 
 
 class RegistryMetadataError(RuntimeError):
@@ -90,6 +99,7 @@ class PackageResolution:
     published_at: str | None = None
     version_age_days: float | None = None
     package_created_at: str | None = None
+    package_age_days: float | None = None
     version_count: int | None = None
     maintainer_count: int | None = None
     repository_url: str | None = None
@@ -120,6 +130,7 @@ class PackageResolution:
             "published_at": self.published_at,
             "version_age_days": self.version_age_days,
             "package_created_at": self.package_created_at,
+            "package_age_days": self.package_age_days,
             "version_count": self.version_count,
             "maintainer_count": self.maintainer_count,
             "repository_url": self.repository_url,
@@ -140,6 +151,7 @@ class RegistryMetadataClient:
         self.timeout = timeout
         self.max_bytes = max_bytes
         self._cache: dict[str, dict] = {}
+        self._cooldown_until = 0.0
         self._ssl_context = ssl.create_default_context()
         self._opener = build_opener(
             _AllowlistRedirectHandler(),
@@ -149,6 +161,11 @@ class RegistryMetadataClient:
     def __call__(self, url: str) -> dict:
         if url in self._cache:
             return self._cache[url]
+        remaining = self._cooldown_until - time.monotonic()
+        if remaining > 0:
+            raise RegistryMetadataError(
+                f"registry rate-limit cooldown active; retry after {remaining:.1f}s"
+            )
         parsed = urlsplit(url)
         if not parsed.hostname or (
             parsed.hostname not in ALLOWED_HOSTS
@@ -175,6 +192,14 @@ class RegistryMetadataClient:
                 payload = response.read(self.max_bytes + 1)
         except HTTPError as exc:
             retry_after = exc.headers.get("Retry-After") if exc.headers else None
+            cooldown = retry_after_seconds(retry_after)
+            if exc.code == 429 and cooldown is None:
+                cooldown = 60
+            if cooldown is not None:
+                self._cooldown_until = max(
+                    self._cooldown_until,
+                    time.monotonic() + cooldown,
+                )
             detail = f"HTTP {exc.code}"
             if retry_after:
                 detail += f"; Retry-After={retry_after}"
@@ -248,7 +273,11 @@ def package_request(reference: PackageReference) -> PackageRequest | None:
     return None
 
 
-def _npm_resolution(request: PackageRequest, fetch: MetadataFetcher) -> PackageResolution:
+def _npm_resolution(
+    request: PackageRequest,
+    fetch: MetadataFetcher,
+    verify_provenance: ProvenanceVerifier | None = None,
+) -> PackageResolution:
     url = f"https://{NPM_HOST}/{quote(request.name, safe='@')}"
     metadata = fetch(url)
     if _EXACT_VERSION_RE.fullmatch(request.requested):
@@ -270,17 +299,6 @@ def _npm_resolution(request: PackageRequest, fetch: MetadataFetcher) -> PackageR
     integrity = dist.get("integrity") if isinstance(dist.get("integrity"), str) else None
     if integrity is None and isinstance(dist.get("shasum"), str):
         integrity = f"sha1-{dist['shasum']}"
-    attestations = dist.get("attestations")
-    signatures = dist.get("signatures")
-    provenance_present = bool(attestations)
-    registry_signatures_present = bool(signatures)
-    provenance = _npm_provenance(
-        attestations,
-        name=request.name,
-        version=version,
-        integrity=integrity,
-        fetch=fetch,
-    )
     times = metadata.get("time")
     published_at = times.get(version) if isinstance(times, dict) else None
     created_at = times.get("created") if isinstance(times, dict) else None
@@ -292,6 +310,19 @@ def _npm_resolution(request: PackageRequest, fetch: MetadataFetcher) -> PackageR
         repository = metadata.get("repository")
     repository_url = repository.get("url") if isinstance(repository, dict) else repository
     git_head = version_data.get("gitHead")
+    attestations = dist.get("attestations")
+    signatures = dist.get("signatures")
+    provenance_present = bool(attestations)
+    registry_signatures_present = bool(signatures)
+    provenance = _npm_provenance(
+        attestations,
+        name=request.name,
+        version=version,
+        integrity=integrity,
+        repository_url=repository_url if isinstance(repository_url, str) else None,
+        fetch=fetch,
+        verify_provenance=verify_provenance,
+    )
     return PackageResolution(
         ecosystem=request.ecosystem,
         name=request.name,
@@ -314,6 +345,7 @@ def _npm_resolution(request: PackageRequest, fetch: MetadataFetcher) -> PackageR
         published_at=published_at if isinstance(published_at, str) else None,
         version_age_days=_age_days(published_at),
         package_created_at=created_at if isinstance(created_at, str) else None,
+        package_age_days=_age_days(created_at),
         version_count=len(versions) if isinstance(versions, dict) else None,
         maintainer_count=len(maintainers) if isinstance(maintainers, list) else None,
         repository_url=repository_url if isinstance(repository_url, str) else None,
@@ -347,6 +379,14 @@ def _pypi_resolution(request: PackageRequest, fetch: MetadataFetcher) -> Package
     integrity = f"sha256-{digest}" if isinstance(digest, str) else None
     published_at = artifact.get("upload_time_iso_8601")
     releases = metadata.get("releases")
+    upload_times = [
+        item.get("upload_time_iso_8601")
+        for artifacts in releases.values()
+        if isinstance(artifacts, list)
+        for item in artifacts
+        if isinstance(item, dict) and isinstance(item.get("upload_time_iso_8601"), str)
+    ] if isinstance(releases, dict) else []
+    package_created_at = min(upload_times) if upload_times else None
     maintainers = [
         value
         for value in (info.get("maintainer"), info.get("maintainer_email"))
@@ -373,6 +413,8 @@ def _pypi_resolution(request: PackageRequest, fetch: MetadataFetcher) -> Package
         metadata_sha256=_metadata_sha256(metadata),
         published_at=published_at if isinstance(published_at, str) else None,
         version_age_days=_age_days(published_at),
+        package_created_at=package_created_at,
+        package_age_days=_age_days(package_created_at),
         version_count=len(releases) if isinstance(releases, dict) else None,
         maintainer_count=len(maintainers),
         repository_url=repository_url,
@@ -397,7 +439,9 @@ def _npm_provenance(
     name: str,
     version: str,
     integrity: str | None,
+    repository_url: str | None,
     fetch: MetadataFetcher,
+    verify_provenance: ProvenanceVerifier | None,
 ) -> dict:
     result = {
         "url": None,
@@ -449,8 +493,21 @@ def _npm_provenance(
         encoded = envelope.get("payload") if isinstance(envelope, dict) else None
         if not isinstance(encoded, str):
             continue
+        verified_payload = None
+        if verify_provenance is not None and isinstance(bundle, dict):
+            try:
+                verification = verify_provenance(bundle, repository_url)
+            except Exception as exc:  # Resolver failures must remain per-package.
+                verification = ProvenanceVerification(
+                    status="error",
+                    reason=f"verifier failed: {type(exc).__name__}: {exc}"[:1000],
+                )
+            result["cryptographic_verification"] = verification.status
+            if verification.reason:
+                result["reason"] = f"Sigstore verification: {verification.reason}"
+            verified_payload = verification.payload
         try:
-            payload = base64.b64decode(encoded, validate=True)
+            payload = verified_payload or base64.b64decode(encoded, validate=True)
             if len(payload) > 1024 * 1024:
                 result["reason"] = "attestation statement exceeded 1 MiB"
                 return result
@@ -500,9 +557,24 @@ def _npm_provenance(
                 if isinstance(revision, str):
                     result["revision"] = revision
                     break
-        if result["subject_matches"]:
+        if result["subject_matches"] and result["cryptographic_verification"] == "verified":
+            result["reason"] = (
+                "Sigstore DSSE identity and transparency evidence verified; "
+                "statement subject matches registry integrity"
+            )
+        elif (
+            result["subject_matches"]
+            and result["cryptographic_verification"] == "not-performed"
+        ):
             result["reason"] = (
                 "statement subject matches registry integrity; DSSE signature not verified"
+            )
+        elif result["subject_matches"]:
+            verification_reason = result["reason"] or "no detail"
+            result["reason"] = (
+                "statement subject matches registry integrity; "
+                f"Sigstore verification {result['cryptographic_verification']}: "
+                f"{verification_reason}"
             )
         else:
             result["reason"] = "statement subject does not match registry integrity"
@@ -537,6 +609,7 @@ def _age_days(timestamp: object) -> float | None:
 def resolve_package_references(
     references: list[PackageReference],
     fetch: MetadataFetcher,
+    verify_provenance: ProvenanceVerifier | None = None,
 ) -> list[PackageResolution]:
     """Resolve unique network-capable registry references; keep failures non-fatal."""
     requests: dict[tuple[str, str, str], PackageRequest] = {}
@@ -573,7 +646,7 @@ def resolve_package_references(
     for request in requests.values():
         try:
             if request.ecosystem == "npm":
-                resolution = _npm_resolution(request, fetch)
+                resolution = _npm_resolution(request, fetch, verify_provenance)
             else:
                 resolution = _pypi_resolution(request, fetch)
         except RegistryMetadataError as exc:

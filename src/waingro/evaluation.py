@@ -92,6 +92,7 @@ class BenchmarkReport:
     """Complete deterministic benchmark result."""
 
     dataset: str
+    analysis_mode: str = "static"
     records: list[BenchmarkRecord] = field(default_factory=list)
     errors: list[dict[str, str]] = field(default_factory=list)
 
@@ -140,6 +141,7 @@ class BenchmarkReport:
         return {
             "schema_version": "1.0",
             "dataset": self.dataset,
+            "analysis_mode": self.analysis_mode,
             "cases": len(self.records),
             "errors": self.errors,
             "verdicts": {
@@ -172,10 +174,12 @@ def discover_benchmark_cases(dataset: Path) -> list[BenchmarkCase]:
     return cases
 
 
-def evaluate_dataset(dataset: Path) -> BenchmarkReport:
+def evaluate_dataset(dataset: Path, *, analysis_mode: str = "static") -> BenchmarkReport:
     """Scan a labeled dataset without executing any skill content."""
+    if analysis_mode not in {"static", "hybrid-static"}:
+        raise ValueError(f"unsupported benchmark analysis mode: {analysis_mode}")
     dataset = dataset.resolve()
-    report = BenchmarkReport(dataset=str(dataset))
+    report = BenchmarkReport(dataset=str(dataset), analysis_mode=analysis_mode)
     for case in discover_benchmark_cases(dataset):
         try:
             result = scan_skill(case.path)
@@ -184,12 +188,17 @@ def evaluate_dataset(dataset: Path) -> BenchmarkReport:
                 {"path": str(case.path), "error": f"{type(exc).__name__}: {exc}"}
             )
             continue
+        verdict = result.verdict
+        if analysis_mode == "hybrid-static":
+            from waingro.analyzers.hybrid import assess_scan
+
+            verdict = assess_scan(result).verdict.value
         report.records.append(
             BenchmarkRecord(
                 path=str(case.path.relative_to(dataset)),
                 label=case.label,
                 category=case.category,
-                verdict=result.verdict,
+                verdict=verdict,
                 rule_ids=sorted({finding.rule_id for finding in result.findings}),
             )
         )

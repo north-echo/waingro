@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "waingro"
-version = "0.5.0"
+version = "0.6.0"
 description = "AI Agent Security Scanner — OpenClaw Skills + MCP Servers"
 readme = "README.md"
 license = {text = "MIT"}
@@ -37,6 +37,9 @@ dev = [
     "pytest>=8.0",
     "pytest-cov>=5.0",
     "ruff>=0.8",
+]
+provenance = [
+    "sigstore>=4.0,<5",
 ]
 
 [project.scripts]

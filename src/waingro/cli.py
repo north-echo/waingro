@@ -7,11 +7,18 @@ from pathlib import Path
 import click
 
 from waingro import __version__
+from waingro.analyzers.hybrid import assess_scan
 from waingro.analyzers.risk_profile import compute_risk_profile
+from waingro.dynamic.plan import build_dynamic_plan, preflight_hanna2, write_plan
+from waingro.dynamic.runner import DynamicRunnerError, run_dynamic_job
+from waingro.dynamic.trace import load_runtime_trace
+from waingro.ecosystem import load_ecosystem_context
 from waingro.evaluation import PREDICATES, evaluate_dataset
 from waingro.models import Severity
 from waingro.reporters.console import print_audit_results, print_result
 from waingro.reporters.json_report import format_audit_json, format_json, result_to_dict
+from waingro.resolvers.dependency_graph import resolve_dependency_graph
+from waingro.resolvers.osv import OsvClient, query_vulnerabilities
 from waingro.resolvers.package_artifact import (
     DEFAULT_MAX_ARTIFACT_BYTES,
     PackageArtifactClient,
@@ -22,6 +29,7 @@ from waingro.resolvers.package_registry import (
     RegistryMetadataClient,
     resolve_package_references,
 )
+from waingro.resolvers.provenance import SigstoreProvenanceVerifier
 from waingro.scanner import audit_skills, load_skill, scan_skill
 
 SEVERITY_MAP = {
@@ -202,6 +210,13 @@ def audit(
     show_default=True,
     help="Verdict boundary used for pass/fail metrics.",
 )
+@click.option(
+    "--mode",
+    type=click.Choice(["static", "hybrid-static"]),
+    default="static",
+    show_default=True,
+    help="Evaluate legacy static verdicts or the evidence-separated hybrid model.",
+)
 @click.option("-f", "--format", "fmt", type=click.Choice(["console", "json"]), default="console")
 @click.option("-o", "--output", type=click.Path(path_type=Path), default=None)
 @click.option("--fail-under-precision", type=click.FloatRange(0.0, 1.0), default=None)
@@ -209,6 +224,7 @@ def audit(
 def benchmark(
     dataset: Path,
     threshold: str,
+    mode: str,
     fmt: str,
     output: Path | None,
     fail_under_precision: float | None,
@@ -216,7 +232,7 @@ def benchmark(
 ) -> None:
     """Evaluate WAINGRO against DATASET/{benign,malicious} without executing it."""
     try:
-        report = evaluate_dataset(dataset)
+        report = evaluate_dataset(dataset, analysis_mode=mode)
     except (OSError, ValueError) as exc:
         raise click.ClickException(str(exc)) from exc
 
@@ -227,6 +243,7 @@ def benchmark(
     else:
         lines = [
             f"Dataset: {data['dataset']}",
+            f"Mode: {data['analysis_mode']}",
             f"Cases: {data['cases']}  Errors: {len(data['errors'])}",
             "",
             "Threshold       Precision  Recall  Specificity  F1       TP  FP  TN  FN",
@@ -291,6 +308,37 @@ def version() -> None:
     default=DEFAULT_MAX_ARTIFACT_BYTES,
     show_default=True,
 )
+@click.option(
+    "--dependency-depth",
+    type=click.IntRange(0, 5),
+    default=0,
+    show_default=True,
+    help="Recursively inspect dependencies to this depth; requires artifact inspection.",
+)
+@click.option(
+    "--max-dependency-nodes",
+    type=click.IntRange(1, 2000),
+    default=250,
+    show_default=True,
+)
+@click.option(
+    "--verify-provenance",
+    is_flag=True,
+    default=False,
+    help="Cryptographically verify npm Sigstore provenance against repository identity.",
+)
+@click.option(
+    "--offline-trust-root",
+    is_flag=True,
+    default=False,
+    help="Use Sigstore's cached or bundled trust root without refreshing it.",
+)
+@click.option(
+    "--osv",
+    is_flag=True,
+    default=False,
+    help="Query OSV for exact resolved package versions.",
+)
 @click.option("-o", "--output", type=click.Path(path_type=Path), default=None)
 def resolve_packages(
     path: Path,
@@ -298,13 +346,29 @@ def resolve_packages(
     max_metadata_bytes: int,
     inspect_artifacts: bool,
     max_artifact_bytes: int,
+    dependency_depth: int,
+    max_dependency_nodes: int,
+    verify_provenance: bool,
+    offline_trust_root: bool,
+    osv: bool,
     output: Path | None,
 ) -> None:
     """Resolve runner references using official registry metadata without executing them."""
+    if dependency_depth and not inspect_artifacts:
+        raise click.UsageError("--dependency-depth requires --inspect-artifacts")
     try:
         result = scan_skill(path)
         client = RegistryMetadataClient(timeout=timeout, max_bytes=max_metadata_bytes)
-        resolutions = resolve_package_references(result.package_references, client)
+        verifier = (
+            SigstoreProvenanceVerifier(offline=offline_trust_root)
+            if verify_provenance
+            else None
+        )
+        resolutions = resolve_package_references(
+            result.package_references,
+            client,
+            verifier,
+        )
         inspections = []
         if inspect_artifacts:
             artifact_client = PackageArtifactClient(
@@ -312,16 +376,392 @@ def resolve_packages(
                 max_bytes=max_artifact_bytes,
             )
             inspections = inspect_package_artifacts(resolutions, artifact_client)
+        dependency_graph = None
+        if dependency_depth:
+            dependency_graph = resolve_dependency_graph(
+                resolutions,
+                inspections,
+                client,
+                artifact_client,
+                max_depth=dependency_depth,
+                max_nodes=max_dependency_nodes,
+                verify_provenance=verifier,
+            )
+        all_resolutions = [
+            *resolutions,
+            *(dependency_graph.resolutions if dependency_graph else []),
+        ]
+        vulnerabilities = (
+            query_vulnerabilities(all_resolutions, OsvClient(timeout=timeout))
+            if osv
+            else []
+        )
     except (OSError, ValueError) as exc:
         raise click.ClickException(str(exc)) from exc
     report = result_to_dict(result)
     report["package_resolutions"] = [resolution.to_dict() for resolution in resolutions]
     report["package_artifacts"] = [inspection.to_dict() for inspection in inspections]
+    report["dependency_graph"] = (
+        dependency_graph.to_dict() if dependency_graph else None
+    )
+    report["package_vulnerabilities"] = [item.to_dict() for item in vulnerabilities]
     rendered = json.dumps(report, indent=2)
     if output:
         output.write_text(rendered + "\n", encoding="utf-8")
     else:
         click.echo(rendered)
+
+
+@main.command()
+@click.argument("path", type=click.Path(exists=True, path_type=Path))
+@click.option(
+    "--packages",
+    is_flag=True,
+    default=False,
+    help="Resolve package references through official registry metadata APIs.",
+)
+@click.option(
+    "--inspect-artifacts",
+    is_flag=True,
+    default=False,
+    help="Download and non-extractingly inspect resolved npm archives.",
+)
+@click.option("--verify-provenance", is_flag=True, default=False)
+@click.option("--offline-trust-root", is_flag=True, default=False)
+@click.option("--osv", is_flag=True, default=False)
+@click.option("--dependency-depth", type=click.IntRange(0, 5), default=0)
+@click.option("--max-dependency-nodes", type=click.IntRange(1, 2000), default=250)
+@click.option("--timeout", type=click.FloatRange(min=0.1), default=5.0, show_default=True)
+@click.option(
+    "--ecosystem-context",
+    type=click.Path(exists=True, dir_okay=False, path_type=Path),
+    default=None,
+)
+@click.option(
+    "--runtime-trace",
+    type=click.Path(exists=True, dir_okay=False, path_type=Path),
+    default=None,
+)
+@click.option(
+    "--runtime-signature",
+    type=click.Path(exists=True, dir_okay=False, path_type=Path),
+    default=None,
+)
+@click.option(
+    "--allowed-signers",
+    type=click.Path(exists=True, dir_okay=False, path_type=Path),
+    default=None,
+)
+@click.option("--runtime-base-image-sha256", default=None)
+@click.option("-o", "--output", type=click.Path(path_type=Path), default=None)
+def assess(
+    path: Path,
+    packages: bool,
+    inspect_artifacts: bool,
+    verify_provenance: bool,
+    offline_trust_root: bool,
+    osv: bool,
+    dependency_depth: int,
+    max_dependency_nodes: int,
+    timeout: float,
+    ecosystem_context: Path | None,
+    runtime_trace: Path | None,
+    runtime_signature: Path | None,
+    allowed_signers: Path | None,
+    runtime_base_image_sha256: str | None,
+    output: Path | None,
+) -> None:
+    """Correlate static, ecosystem, package, provenance, and runtime evidence."""
+    if inspect_artifacts and not packages:
+        raise click.UsageError("--inspect-artifacts requires --packages")
+    if verify_provenance and not packages:
+        raise click.UsageError("--verify-provenance requires --packages")
+    if osv and not packages:
+        raise click.UsageError("--osv requires --packages")
+    if dependency_depth and not inspect_artifacts:
+        raise click.UsageError("--dependency-depth requires --inspect-artifacts")
+    if bool(runtime_signature) != bool(allowed_signers):
+        raise click.UsageError(
+            "--runtime-signature and --allowed-signers must be supplied together"
+        )
+    if runtime_signature and not runtime_base_image_sha256:
+        raise click.UsageError(
+            "--runtime-base-image-sha256 is required for authenticated runtime evidence"
+        )
+    try:
+        result = scan_skill(path)
+        if result.artifact_identity is None:
+            raise ValueError("scan did not produce an artifact identity")
+        resolutions = []
+        inspections = []
+        dependency_graph = None
+        vulnerabilities = []
+        if packages:
+            client = RegistryMetadataClient(timeout=timeout)
+            verifier = (
+                SigstoreProvenanceVerifier(offline=offline_trust_root)
+                if verify_provenance
+                else None
+            )
+            resolutions = resolve_package_references(
+                result.package_references,
+                client,
+                verifier,
+            )
+            if inspect_artifacts:
+                artifact_client = PackageArtifactClient(timeout=timeout)
+                inspections = inspect_package_artifacts(resolutions, artifact_client)
+                if dependency_depth:
+                    dependency_graph = resolve_dependency_graph(
+                        resolutions,
+                        inspections,
+                        client,
+                        artifact_client,
+                        max_depth=dependency_depth,
+                        max_nodes=max_dependency_nodes,
+                        verify_provenance=verifier,
+                    )
+            all_resolutions = [
+                *resolutions,
+                *(dependency_graph.resolutions if dependency_graph else []),
+            ]
+            if osv:
+                vulnerabilities = query_vulnerabilities(
+                    all_resolutions,
+                    OsvClient(timeout=timeout),
+                )
+        context = (
+            load_ecosystem_context(ecosystem_context, result.artifact_identity.sha256)
+            if ecosystem_context
+            else None
+        )
+        trace = (
+            load_runtime_trace(
+                runtime_trace,
+                expected_artifact_sha256=result.artifact_identity.sha256,
+                signature_path=runtime_signature,
+                allowed_signers=allowed_signers,
+                expected_base_image_sha256=runtime_base_image_sha256,
+            )
+            if runtime_trace
+            else None
+        )
+        assessment = assess_scan(
+            result,
+            resolutions=[
+                *resolutions,
+                *(dependency_graph.resolutions if dependency_graph else []),
+            ],
+            inspections=[
+                *inspections,
+                *(dependency_graph.inspections if dependency_graph else []),
+            ],
+            vulnerabilities=vulnerabilities,
+            ecosystem_context=context,
+            runtime_trace=trace,
+            dependency_graph=dependency_graph,
+        )
+    except (OSError, ValueError) as exc:
+        raise click.ClickException(str(exc)) from exc
+    report = result_to_dict(result)
+    report["analysis_scope"] = "hybrid"
+    report["static_verdict"] = report.pop("verdict")
+    report["verdict"] = assessment.verdict.value
+    report["assessment"] = assessment.to_dict()
+    report["package_resolutions"] = [item.to_dict() for item in resolutions]
+    report["package_artifacts"] = [item.to_dict() for item in inspections]
+    report["dependency_graph"] = dependency_graph.to_dict() if dependency_graph else None
+    report["package_vulnerabilities"] = [item.to_dict() for item in vulnerabilities]
+    report["ecosystem_context"] = context.to_dict() if context else None
+    report["runtime_trace"] = trace.to_dict() if trace else None
+    rendered = json.dumps(report, indent=2)
+    if output:
+        output.write_text(rendered + "\n", encoding="utf-8")
+    else:
+        click.echo(rendered)
+
+
+@main.group()
+def dynamic() -> None:
+    """Plan and validate KVM-isolated analysis on hanna2."""
+
+
+@dynamic.command("preflight")
+def dynamic_preflight() -> None:
+    """Run read-only hanna2 KVM and libvirt readiness checks."""
+    report = preflight_hanna2()
+    click.echo(json.dumps(report, indent=2))
+    if not report["ready"]:
+        raise click.ClickException("host does not satisfy the hanna2 dynamic policy")
+
+
+@dynamic.command("plan")
+@click.argument("path", type=click.Path(exists=True, path_type=Path))
+@click.option("--base-image", required=True, help="Pinned base-image file name on hanna2.")
+@click.option("--base-image-sha256", required=True)
+@click.option(
+    "--network-policy",
+    type=click.Choice(["none"]),
+    default="none",
+    show_default=True,
+)
+@click.option("--timeout", "timeout_seconds", type=click.IntRange(10, 300), default=120)
+@click.option("--memory", "memory_mib", type=click.IntRange(256, 2048), default=1024)
+@click.option(
+    "--authorize-execution",
+    is_flag=True,
+    default=False,
+    help="Record explicit authorization in the plan; this command still starts no VM.",
+)
+@click.option("--interpreter", type=click.Choice(["python", "node", "shell"]), default=None)
+@click.option("--entrypoint", default=None, help="Candidate-relative file at depth two or less.")
+@click.option(
+    "--argument",
+    "arguments",
+    multiple=True,
+    help="Literal argument; never shell parsed.",
+)
+@click.option("-o", "--output", type=click.Path(path_type=Path), required=True)
+def dynamic_plan(
+    path: Path,
+    base_image: str,
+    base_image_sha256: str,
+    network_policy: str,
+    timeout_seconds: int,
+    memory_mib: int,
+    authorize_execution: bool,
+    interpreter: str | None,
+    entrypoint: str | None,
+    arguments: tuple[str, ...],
+    output: Path,
+) -> None:
+    """Create a non-overwriting, artifact-bound hanna2 execution plan."""
+    try:
+        result = scan_skill(path)
+        if result.artifact_identity is None:
+            raise ValueError("scan did not produce an artifact identity")
+        plan = build_dynamic_plan(
+            result.artifact_identity,
+            base_image=base_image,
+            base_image_sha256=base_image_sha256,
+            network_policy=network_policy,
+            timeout_seconds=timeout_seconds,
+            memory_mib=memory_mib,
+            authorize_execution=authorize_execution,
+            interpreter=interpreter,
+            entrypoint=entrypoint,
+            arguments=arguments,
+        )
+        write_plan(plan, output)
+    except (OSError, ValueError) as exc:
+        raise click.ClickException(str(exc)) from exc
+    click.echo(json.dumps(plan.to_dict(), indent=2))
+
+
+@dynamic.command("validate-trace")
+@click.argument("path", type=click.Path(exists=True, path_type=Path))
+@click.argument("trace", type=click.Path(exists=True, dir_okay=False, path_type=Path))
+@click.option(
+    "--signature",
+    type=click.Path(exists=True, dir_okay=False, path_type=Path),
+    default=None,
+)
+@click.option(
+    "--allowed-signers",
+    type=click.Path(exists=True, dir_okay=False, path_type=Path),
+    default=None,
+)
+@click.option("--base-image-sha256", default=None)
+def dynamic_validate_trace(
+    path: Path,
+    trace: Path,
+    signature: Path | None,
+    allowed_signers: Path | None,
+    base_image_sha256: str | None,
+) -> None:
+    """Validate and optionally authenticate a hanna2 runtime trace."""
+    if bool(signature) != bool(allowed_signers):
+        raise click.UsageError("--signature and --allowed-signers must be supplied together")
+    if signature and not base_image_sha256:
+        raise click.UsageError(
+            "--base-image-sha256 is required for authenticated runtime evidence"
+        )
+    try:
+        result = scan_skill(path)
+        if result.artifact_identity is None:
+            raise ValueError("scan did not produce an artifact identity")
+        loaded = load_runtime_trace(
+            trace,
+            expected_artifact_sha256=result.artifact_identity.sha256,
+            signature_path=signature,
+            allowed_signers=allowed_signers,
+            expected_base_image_sha256=base_image_sha256,
+        )
+    except (OSError, ValueError) as exc:
+        raise click.ClickException(str(exc)) from exc
+    click.echo(json.dumps(loaded.to_dict(), indent=2))
+
+
+@dynamic.command("run")
+@click.argument(
+    "plan",
+    type=click.Path(exists=True, dir_okay=False, path_type=Path),
+)
+@click.argument(
+    "candidate",
+    type=click.Path(exists=True, file_okay=False, path_type=Path),
+)
+@click.option(
+    "--confirm-job-id",
+    required=True,
+    help="Exact authorized job ID; prevents accidental execution of another plan.",
+)
+@click.option(
+    "--image-dir",
+    type=click.Path(exists=True, file_okay=False, path_type=Path),
+    default=Path("/var/lib/libvirt/images/waingro"),
+    show_default=True,
+)
+@click.option(
+    "--work-root",
+    type=click.Path(exists=True, file_okay=False, path_type=Path),
+    default=Path("/var/lib/libvirt/images/waingro/jobs"),
+    show_default=True,
+)
+@click.option(
+    "--signing-key",
+    type=click.Path(exists=True, dir_okay=False, path_type=Path),
+    default=None,
+)
+@click.option(
+    "-o",
+    "--output",
+    type=click.Path(path_type=Path),
+    required=True,
+)
+def dynamic_run(
+    plan: Path,
+    candidate: Path,
+    confirm_job_id: str,
+    image_dir: Path,
+    work_root: Path,
+    signing_key: Path | None,
+    output: Path,
+) -> None:
+    """Run one explicitly authorized job; available only on hardened hanna2."""
+    try:
+        result = run_dynamic_job(
+            plan,
+            candidate,
+            confirm_job_id=confirm_job_id,
+            image_dir=image_dir,
+            work_root=work_root,
+            output_trace=output,
+            signing_key=signing_key,
+        )
+    except (DynamicRunnerError, OSError, ValueError) as exc:
+        raise click.ClickException(str(exc)) from exc
+    click.echo(json.dumps(result.to_dict(), indent=2))
 
 
 # ── MCP subcommand group ──────────────────────────────────────────────

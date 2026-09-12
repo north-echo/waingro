@@ -13,6 +13,7 @@ from waingro.resolvers.package_registry import (
     package_request,
     resolve_package_references,
 )
+from waingro.resolvers.provenance import ProvenanceVerification
 
 
 def reference(
@@ -159,6 +160,62 @@ def test_npm_provenance_statement_binds_subject_to_registry_integrity():
         "statement subject matches registry integrity; DSSE signature not verified"
     )
     assert len(resolved.provenance_statement_sha256 or "") == 64
+
+
+def test_npm_provenance_can_be_cryptographically_verified():
+    artifact_digest = b"\x02" * 64
+    integrity = "sha512-" + base64.b64encode(artifact_digest).decode("ascii")
+    statement = {
+        "subject": [{
+            "name": "pkg:npm/example@1.0.0",
+            "digest": {"sha512": artifact_digest.hex()},
+        }],
+        "predicate": {"buildDefinition": {}},
+    }
+    payload = json.dumps(statement).encode()
+    attestation_url = (
+        "https://registry.npmjs.org/-/npm/v1/attestations/example@1.0.0"
+    )
+
+    def fetch(url):
+        if url == attestation_url:
+            return {
+                "attestations": [{
+                    "predicateType": "https://slsa.dev/provenance/v1",
+                    "bundle": {
+                        "dsseEnvelope": {
+                            "payload": base64.b64encode(payload).decode("ascii")
+                        }
+                    },
+                }]
+            }
+        return {
+            "dist-tags": {"latest": "1.0.0"},
+            "versions": {
+                "1.0.0": {
+                    "repository": "git+https://github.com/example/project.git",
+                    "dist": {
+                        "integrity": integrity,
+                        "attestations": {"url": attestation_url},
+                    },
+                }
+            },
+        }
+
+    def verify(bundle, repository):
+        assert "dsseEnvelope" in bundle
+        assert repository == "git+https://github.com/example/project.git"
+        return ProvenanceVerification(status="verified", payload=payload)
+
+    [resolved] = resolve_package_references(
+        [reference("npx", "example")],
+        fetch,
+        verify,
+    )
+
+    assert resolved.cryptographic_verification == "verified"
+    assert resolved.provenance_subject_matches is True
+    assert "transparency evidence verified" in (resolved.provenance_reason or "")
 
 
 def test_resolves_exact_npm_version_without_using_a_tag():

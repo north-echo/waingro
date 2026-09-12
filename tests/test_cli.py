@@ -14,7 +14,7 @@ def test_version_command():
     runner = CliRunner()
     result = runner.invoke(main, ["version"])
     assert result.exit_code == 0
-    assert "0.5.0" in result.output
+    assert "0.6.0" in result.output
 
 
 def test_scan_clean_console():
@@ -144,6 +144,43 @@ def test_resolve_packages_uses_metadata_only_client(tmp_path, monkeypatch):
     assert result.exit_code == 0
     assert report["package_resolutions"][0]["resolved_version"] == "4.0.0"
     assert report["package_resolutions"][0]["integrity"] == "sha512-example"
+
+
+def test_assess_separates_static_capability_from_malicious_intent():
+    result = CliRunner().invoke(
+        main,
+        ["assess", str(FIXTURES_DIR / "malicious" / "clawhavoc-curl-pipe")],
+    )
+    report = json.loads(result.output)
+
+    assert result.exit_code == 0
+    assert report["static_verdict"] == "SUSPICIOUS"
+    assert report["verdict"] == "CAPABILITY"
+    assert report["assessment"]["dynamic_recommended"] is True
+
+
+def test_dynamic_plan_command_creates_non_authorized_plan(tmp_path):
+    output = tmp_path / "plan.json"
+    result = CliRunner().invoke(
+        main,
+        [
+            "dynamic",
+            "plan",
+            str(FIXTURES_DIR / "clean" / "basic-skill"),
+            "--base-image",
+            "waingro-base.qcow2",
+            "--base-image-sha256",
+            "a" * 64,
+            "--output",
+            str(output),
+        ],
+    )
+
+    assert result.exit_code == 0
+    report = json.loads(output.read_text(encoding="utf-8"))
+    assert report["execution"]["authorized"] is False
+    assert report["execution"]["expected_host"] == "hanna2"
+    assert report["execution"]["host_shares"] is False
 
 
 def test_scan_fail_on_critical():

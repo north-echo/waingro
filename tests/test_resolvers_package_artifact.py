@@ -69,6 +69,7 @@ def test_inspects_verified_npm_archive_without_extracting():
     assert inspected.install_time_scripts == {"postinstall": "node setup.js"}
     assert inspected.prepare_script is None
     assert inspected.declared_dependency_count == 1
+    assert inspected.declared_dependencies == {"left-pad": "1.3.0"}
     assert inspected.member_count == 1
 
 

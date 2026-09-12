@@ -13,6 +13,7 @@ import io
 import json
 import ssl
 import tarfile
+import time
 from dataclasses import dataclass, field
 from pathlib import PurePosixPath
 from typing import Protocol
@@ -20,6 +21,7 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import urlsplit
 from urllib.request import HTTPRedirectHandler, HTTPSHandler, Request, build_opener
 
+from waingro.resolvers.http_safety import retry_after_seconds
 from waingro.resolvers.package_registry import PackageResolution
 
 NPM_ARTIFACT_HOST = "registry.npmjs.org"
@@ -78,6 +80,7 @@ class PackageArtifactInspection:
     install_time_scripts: dict[str, str] = field(default_factory=dict)
     prepare_script: str | None = None
     declared_dependency_count: int | None = None
+    declared_dependencies: dict[str, str] = field(default_factory=dict)
     reason: str | None = None
 
     def to_dict(self) -> dict:
@@ -99,6 +102,7 @@ class PackageArtifactInspection:
             "install_time_scripts": self.install_time_scripts,
             "prepare_script": self.prepare_script,
             "declared_dependency_count": self.declared_dependency_count,
+            "declared_dependencies": self.declared_dependencies,
             "reason": self.reason,
         }
 
@@ -119,10 +123,16 @@ class PackageArtifactClient:
             HTTPSHandler(context=context),
         )
         self._cache: dict[str, bytes] = {}
+        self._cooldown_until = 0.0
 
     def __call__(self, url: str) -> bytes:
         if url in self._cache:
             return self._cache[url]
+        remaining = self._cooldown_until - time.monotonic()
+        if remaining > 0:
+            raise PackageArtifactError(
+                f"artifact rate-limit cooldown active; retry after {remaining:.1f}s"
+            )
         if not _is_standard_npm_https(url):
             raise PackageArtifactError(f"artifact URL is not allowlisted: {url}")
         request = Request(  # noqa: S310 -- fixed registry host checked above.
@@ -149,6 +159,14 @@ class PackageArtifactClient:
                 payload = response.read(self.max_bytes + 1)
         except HTTPError as exc:
             retry_after = exc.headers.get("Retry-After") if exc.headers else None
+            cooldown = retry_after_seconds(retry_after)
+            if exc.code == 429 and cooldown is None:
+                cooldown = 60
+            if cooldown is not None:
+                self._cooldown_until = max(
+                    self._cooldown_until,
+                    time.monotonic() + cooldown,
+                )
             detail = f"HTTP {exc.code}"
             if retry_after:
                 detail += f"; Retry-After={retry_after}"
@@ -305,12 +323,22 @@ def inspect_npm_artifact(
         if name in {"preinstall", "install", "postinstall"}
     }
     dependency_count = None
+    declared_dependencies: dict[str, str] = {}
     if isinstance(package_data, dict):
-        dependency_count = sum(
-            len(package_data.get(field, {}))
-            for field in ("dependencies", "optionalDependencies")
-            if isinstance(package_data.get(field), dict)
-        )
+        for field in ("dependencies", "optionalDependencies"):
+            values = package_data.get(field)
+            if not isinstance(values, dict):
+                continue
+            for dependency_name, selector in values.items():
+                if (
+                    isinstance(dependency_name, str)
+                    and isinstance(selector, str)
+                    and len(dependency_name) <= 214
+                    and len(selector) <= 512
+                    and len(declared_dependencies) < 2_000
+                ):
+                    declared_dependencies[dependency_name] = selector
+        dependency_count = len(declared_dependencies)
     return PackageArtifactInspection(
         **base,
         status=status,
@@ -323,6 +351,7 @@ def inspect_npm_artifact(
         install_time_scripts=install_time_scripts,
         prepare_script=declared_lifecycle_scripts.get("prepare"),
         declared_dependency_count=dependency_count,
+        declared_dependencies=dict(sorted(declared_dependencies.items())),
         reason=reason,
     )
 

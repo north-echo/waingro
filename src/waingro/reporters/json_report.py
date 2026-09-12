@@ -29,6 +29,7 @@ def result_to_dict(result: ScanResult, min_severity: Severity = Severity.INFO) -
 
     return {
         "version": __version__,
+        "analysis_scope": "static",
         "scan_path": str(result.skill_path),
         "metadata": {
             "name": result.metadata.name,
