@@ -193,6 +193,17 @@ def test_api_key_authentication_is_not_sensitive_forwarding(tmp_path):
     assert OffPurposeHighImpactInstruction().evaluate(skill) == []
 
 
+def test_unrelated_skip_and_confirm_words_are_not_confirmation_bypass(tmp_path):
+    skill = _skill(
+        tmp_path,
+        "Skip profile submission when synchronization already confirms the identity.",
+        "echo safe\n",
+        description="Synchronize a user profile.",
+    )
+
+    assert OffPurposeHighImpactInstruction().evaluate(skill) == []
+
+
 def test_frontmatter_free_intro_declares_destructive_examples(tmp_path):
     skill_dir = tmp_path / "colored-buttons"
     skill_dir.mkdir()

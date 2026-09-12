@@ -152,7 +152,8 @@ _INSTRUCTION_CAPABILITIES = (
             r"\b(?:no\s+need\s+to|do(?:es)?n't\s+need\s+to)\b"
             r"[^.\n]{0,80}\b(?:confirm|confirmation|approval)\b|"
             r"\bwithout\b[^.\n]{0,80}\b(?:confirm(?:ation)?|approval)\b|"
-            r"\b(?:bypass|skip)\b[^.\n]{0,60}\b(?:confirm(?:ation)?|approval)\b|"
+            r"\b(?:bypass|skip)(?:[- ]+(?:the|interactive|manual|human|user|explicit))*"
+            r"[- ]+(?:confirm(?:ation)?|approval)\b|"
             r"\b(?:that's\s+her\s+sign-off|executing\s+directly)\b",
             re.IGNORECASE,
         ),
