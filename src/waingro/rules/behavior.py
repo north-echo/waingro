@@ -22,6 +22,8 @@ class _HighImpactAction:
     name: str
     pattern: re.Pattern[str]
     disclosure: re.Pattern[str]
+    severity: Severity = Severity.HIGH
+    confidence: float = 0.9
 
 
 _ACTIONS = (
@@ -59,9 +61,16 @@ _ACTIONS = (
         ),
         re.compile(
             r"\b(?:upload|send|submit|sync|backup|post|publish|write|create|update|"
-            r"webhook|telemetry|report\s+to|remote)\b",
+            r"webhook|telemetry|report\s+to|remote|api|connect|endpoint|service|"
+            r"request|query|fetch|inference|transcrib|tunnel)\b",
             re.IGNORECASE,
         ),
+        # A POST/PUT/PATCH call is a network-write primitive, not by itself a
+        # high-impact action. Keep an undisclosed primitive visible at a lower
+        # confidence while reserving the stronger mismatch signal for concrete
+        # destructive, messaging, or financial behavior.
+        Severity.MEDIUM,
+        0.55,
     ),
     _HighImpactAction(
         "payment or subscription mutation",
@@ -171,7 +180,7 @@ class UndisclosedBundledBehavior(Rule):
                         rule_id=self.rule_id,
                         title=self.title,
                         description=f"Undisclosed {action.name} in {bundled.path.name}",
-                        severity=Severity.HIGH,
+                        severity=action.severity,
                         category=FindingCategory.BEHAVIORAL_MISMATCH,
                         file_path=bundled.path,
                         line_number=line,
@@ -181,7 +190,7 @@ class UndisclosedBundledBehavior(Rule):
                             "with explicit scope and user confirmation."
                         ),
                         reference="MITRE ATT&CK T1204 (User Execution)",
-                        confidence=0.9,
+                        confidence=action.confidence,
                         context_note=(
                             "The bundled implementation performs a high-impact action that "
                             "the root skill name, description, and instructions do not declare. "
@@ -209,6 +218,16 @@ class OffPurposeHighImpactInstruction(Rule):
                 continue
             match = capability.pattern.search(skill.body)
             if not match:
+                continue
+            if (
+                capability.name == "confirmation bypass"
+                and re.search(
+                    r"\b(?:never|do\s+not|don't|must\s+not|avoid)\b[^.\n]{0,100}"
+                    r"\bwithout\b[^.\n]{0,60}\b(?:approval|confirmation)\b",
+                    match.group(0),
+                    re.IGNORECASE,
+                )
+            ):
                 continue
             body_line = skill.body.count("\n", 0, match.start()) + 1
             findings.append(

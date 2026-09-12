@@ -68,7 +68,20 @@ def _review_score(
     anomaly ranks ahead of an isolated dangerous primitive.  It is not a
     probability and does not participate in the MALICIOUS verdict gate.
     """
-    strongest_path = max((path.confidence for path in paths), default=0.0)
+    evidence_by_id = {item.evidence_id: item for item in evidence}
+    strongest_path = max(
+        (
+            min(
+                evidence_by_id[evidence_id].strength
+                * evidence_by_id[evidence_id].confidence
+                for evidence_id in path.evidence_ids
+                if evidence_id in evidence_by_id
+            )
+            for path in paths
+            if any(evidence_id in evidence_by_id for evidence_id in path.evidence_ids)
+        ),
+        default=0.0,
+    )
     strongest_risk = max(
         (
             item.strength * item.confidence
@@ -82,9 +95,14 @@ def _review_score(
             finding.confidence
             for finding in result.findings
             if finding.rule_id in {"BEHAV-001", "BEHAV-002", "BEHAV-003", "BEHAV-004"}
+            and finding.confidence >= 0.8
         ),
         default=0.0,
     )
+    decisive_static = max(
+        (finding.confidence for finding in result.findings),
+        default=0.0,
+    ) if result.verdict == "MALICIOUS" else 0.0
     # Correlated signals compound, but no single static signal receives a
     # perfect score. This preserves useful ordering among large corpora where
     # many attack paths otherwise tie at confidence 1.0.
@@ -92,6 +110,7 @@ def _review_score(
         0.62 * strongest_path,
         0.70 * strongest_risk,
         0.72 * mismatch,
+        0.75 * decisive_static,
         0.35 * maliciousness,
     ])
 
