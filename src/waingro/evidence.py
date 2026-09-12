@@ -112,7 +112,9 @@ class HybridAssessment:
     missing_evidence: tuple[str, ...] = ()
     rationale: tuple[str, ...] = ()
     dynamic_recommended: bool = False
-    schema_version: str = "2.0"
+    dynamic_priority: str = "none"
+    runtime_coverage: str = "not-run"
+    schema_version: str = "2.1"
 
     def to_dict(self) -> dict:
         return {
@@ -125,6 +127,8 @@ class HybridAssessment:
             "attack_paths": [path.to_dict() for path in self.attack_paths],
             "missing_evidence": list(self.missing_evidence),
             "dynamic_recommended": self.dynamic_recommended,
+            "dynamic_priority": self.dynamic_priority,
+            "runtime_coverage": self.runtime_coverage,
             "rationale": list(self.rationale),
             "evidence": [item.to_dict() for item in self.evidence],
         }

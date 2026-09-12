@@ -227,7 +227,19 @@ def _parse_events() -> list[dict]:
     events = []
     sensitive = ("/.aws/", "/.ssh/", "waingro-canary", "/proc/self/environ")
     persistence = ("/etc/cron", "/etc/systemd", "/.config/autostart", "/.bashrc")
-    for path in sorted(TRACE_DIR.glob("strace.*")):
+    trace_paths = sorted(TRACE_DIR.glob("strace.*"))
+    parents: dict[int, int] = {}
+    process_result = re.compile(r"^(?:clone|clone3|fork|vfork)\(.*\)\s+=\s+(\d+)$")
+    for path in trace_paths:
+        try:
+            pid = int(path.name.rsplit(".", 1)[-1])
+        except ValueError:
+            continue
+        for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
+            _stamp, _separator, call = line.partition(" ")
+            if match := process_result.match(call):
+                parents[int(match.group(1))] = pid
+    for path in trace_paths:
         try:
             pid = int(path.name.rsplit(".", 1)[-1])
         except ValueError:
@@ -248,14 +260,15 @@ def _parse_events() -> list[dict]:
             if call.startswith(("execve(", "execveat(")) and success:
                 events.append(_event(
                     "process", "exec", pid, timestamp=timestamp,
-                    process=target, command=call[:4096],
+                    parent_process_id=parents.get(pid), process=target, command=call[:4096],
                 ))
             elif call.startswith("connect("):
                 event_type = _connect_event_type(call)
                 if event_type is not None:
                     events.append(_event(
                         event_type, "connect", pid, timestamp=timestamp,
-                        success=success, destination=call[:4096],
+                        parent_process_id=parents.get(pid), success=success,
+                        destination=call[:4096],
                     ))
             elif (
                 target
@@ -265,7 +278,8 @@ def _parse_events() -> list[dict]:
                 and success
             ):
                 events.append(_event(
-                    "credential", "read", pid, timestamp=timestamp, target=target,
+                    "credential", "read", pid, timestamp=timestamp,
+                    parent_process_id=parents.get(pid), target=target,
                 ))
             elif (
                 target
@@ -278,7 +292,7 @@ def _parse_events() -> list[dict]:
                 )
                 events.append(_event(
                     event_type, "write", pid, timestamp=timestamp,
-                    success=success, target=target,
+                    parent_process_id=parents.get(pid), success=success, target=target,
                 ))
     return events
 

@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pytest
 
+from waingro.dynamic import guest_agent_payload
 from waingro.dynamic.guest_agent_payload import _connect_event_type
 from waingro.dynamic.plan import build_dynamic_plan, write_plan
 from waingro.dynamic.runner import (
@@ -85,6 +86,28 @@ def _trace() -> dict:
             }
         ],
     }
+
+
+def test_guest_trace_records_parent_processes(tmp_path, monkeypatch):
+    monkeypatch.setattr(guest_agent_payload, "TRACE_DIR", tmp_path)
+    (tmp_path / "strace.100").write_text(
+        "1789142400.000000 clone(child_stack=NULL, flags=SIGCHLD) = 101\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "strace.101").write_text(
+        '1789142400.100000 execve("/usr/bin/bash", ["bash"], []) = 0\n'
+        '1789142400.200000 openat(AT_FDCWD, "/home/waingro/.aws/credentials", '
+        "O_RDONLY) = 3\n"
+        "1789142400.300000 connect(4, {sa_family=AF_INET, "
+        "sin_port=htons(443)}, 16) = -1 ENETUNREACH\n",
+        encoding="utf-8",
+    )
+
+    events = guest_agent_payload._parse_events()
+
+    assert len(events) == 3
+    assert {event["parent_process_id"] for event in events} == {100}
+    assert {event["process_id"] for event in events} == {101}
 
 
 def test_dynamic_plan_is_fail_closed_and_artifact_bound(tmp_path):

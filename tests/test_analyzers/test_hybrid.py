@@ -82,7 +82,8 @@ def test_single_dangerous_primitive_is_capability_not_intent():
     assessment = assess_scan(result)
 
     assert assessment.verdict == AssessmentVerdict.CAPABILITY
-    assert assessment.dynamic_recommended is True
+    assert assessment.dynamic_recommended is False
+    assert assessment.dynamic_priority == "medium"
     assert assessment.dimensions["maliciousness_confidence"].score < 0.6
 
 
@@ -93,7 +94,35 @@ def test_same_file_static_attack_chain_can_be_suspicious_but_not_malicious():
 
     assert assessment.verdict == AssessmentVerdict.SUSPICIOUS
     assert assessment.attack_paths
+    assert assessment.dynamic_recommended is True
+    assert assessment.dynamic_priority == "high"
     assert assessment.dimensions["maliciousness_confidence"].score < 0.85
+
+
+def test_empty_authenticated_trace_does_not_retire_static_attack_path():
+    result = scan_skill(FIXTURES / "malicious" / "clawhavoc-base64")
+    trace = _trace(trusted=True, credential_targets=0)
+    trace = RuntimeTrace(
+        **{
+            **trace.__dict__,
+            "events": (
+                RuntimeEvent(
+                    RuntimeEventType.PROCESS,
+                    "exec",
+                    "2026-09-11T12:00:01Z",
+                    process_id=42,
+                    process="/usr/bin/bash",
+                ),
+            ),
+        }
+    )
+
+    assessment = assess_scan(result, runtime_trace=trace)
+
+    assert assessment.dynamic_recommended is True
+    assert assessment.dynamic_priority == "high"
+    assert assessment.runtime_coverage == "no-relevant-behavior"
+    assert "runtime-behavior-coverage" in assessment.missing_evidence
 
 
 def test_authenticated_runtime_exfiltration_chain_can_establish_maliciousness():
@@ -103,6 +132,8 @@ def test_authenticated_runtime_exfiltration_chain_can_establish_maliciousness():
 
     assert assessment.verdict == AssessmentVerdict.MALICIOUS
     assert any(path.runtime_confirmed for path in assessment.attack_paths)
+    assert assessment.runtime_coverage == "attack-path-observed"
+    assert assessment.dynamic_priority == "none"
 
 
 def test_unauthenticated_runtime_trace_cannot_establish_maliciousness():

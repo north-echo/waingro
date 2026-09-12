@@ -47,7 +47,9 @@ def test_scan_reverse_shell():
 
 def test_scan_credential_exfil():
     result = scan_skill(FIXTURES_DIR / "malicious" / "credential-exfil")
-    assert result.verdict in ("MALICIOUS", "SUSPICIOUS")
+    # This fixture collects sensitive files but contains no egress sink. The
+    # primitive remains visible without being mislabeled as exfiltration.
+    assert result.verdict == "WARNING"
     rule_ids = {f.rule_id for f in result.findings}
     assert "EXFIL-001" in rule_ids or "EXFIL-004" in rule_ids
 

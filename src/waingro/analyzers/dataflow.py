@@ -486,7 +486,11 @@ def _source_is_inside_sink(
         allow_quoted_source or not _is_quoted(clause, source_pos)
     ) and between.count("(") > between.count(")"):
         return True
-    if re.match(r"curl\b", sink.group(0).strip(), re.IGNORECASE):
+    if re.match(
+        r"(?:curl\b|gog\s+gmail\s+send\b|sendmail\b|mail\s+-s\b)",
+        sink.group(0).strip(),
+        re.IGNORECASE,
+    ):
         return True
     is_command_sink = sink.group(0).strip().lower() in {
         "eval",
@@ -569,6 +573,28 @@ def scope_for_finding(
         return ""
     start, end = _scope_bounds(lines, index, file_path)
     return "\n".join(lines[start:end])
+
+
+def scope_from_finding(
+    skill: ParsedSkill,
+    file_path: Path,
+    line_number: int | None,
+) -> str:
+    """Return the finding line through the end of its lexical scope.
+
+    This preserves temporal ordering for conservative source-to-sink checks:
+    a sink that ran before the source reference cannot be evidence that the
+    source was transmitted.
+    """
+    content, line_base = _source_for_finding(skill, file_path, line_number)
+    if not content or is_generated_or_vendored(file_path, content):
+        return ""
+    lines = content.splitlines()
+    index = (line_number or line_base + 1) - line_base - 1
+    if not 0 <= index < len(lines):
+        return ""
+    _start, end = _scope_bounds(lines, index, file_path)
+    return "\n".join(lines[index:end])
 
 
 def expression_reaches_sink(

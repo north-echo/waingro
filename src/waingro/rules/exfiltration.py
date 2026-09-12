@@ -1,11 +1,13 @@
 """Exfiltration rules: detect credential theft and data scraping patterns."""
 
+import hashlib
 import re
 from pathlib import Path
 
 from waingro.analyzers.dataflow import (
     expression_reaches_sink,
     scope_for_finding,
+    scope_from_finding,
     statement_for_finding,
 )
 from waingro.analyzers.reputation import is_first_party, skill_identifiers
@@ -44,8 +46,8 @@ def _file_has_exfil_sink(skill: ParsedSkill, fpath) -> bool:
 @register_rule
 class CredentialFileAccess(Rule):
     rule_id = "EXFIL-001"
-    title = "Credential file access"
-    description = "Detects access to SSH keys, AWS credentials, and other sensitive files"
+    title = "Sensitive credential reference"
+    description = "Detects references to SSH keys, cloud credentials, and other sensitive files"
 
     _patterns = [
         re.compile(r"~/\.ssh/|\.ssh/id_"),
@@ -132,16 +134,21 @@ class CredentialFileAccess(Rule):
                 rule_id=self.rule_id,
                 title=self.title,
                 description=self.description,
-                severity=Severity.HIGH,
+                severity=Severity.MEDIUM,
                 category=FindingCategory.EXFILTRATION,
                 file_path=fpath,
                 line_number=line_num,
                 matched_content=matched[:200],
                 remediation=(
-                    "Skills should not access SSH keys, AWS credentials, "
-                    "or other sensitive files."
+                    "Verify whether the reference performs a read. Correlate any read "
+                    "with execution or egress before treating it as an attack."
                 ),
                 reference="Bitdefender -- credential exfiltration skills scanning for key files",
+                confidence=0.55,
+                context_note=(
+                    "A path or credential marker is a capability primitive, not proof "
+                    "that the skill reads or transmits a credential."
+                ),
             ))
         return findings
 
@@ -284,6 +291,11 @@ class EmbeddedCredentialPatterns(Rule):
     title = "Embedded credential patterns"
     description = "Detects hardcoded API keys, tokens, and cloud credentials"
 
+    _named_literal_re = re.compile(
+        r"\b[A-Z][A-Z0-9_]*(?:API_KEY|ACCESS_KEY|SECRET_KEY|TOKEN|PASSWORD|SECRET)\b"
+        r"\s*(?:=|:)\s*[\"']?(?:\$\{[A-Z][A-Z0-9_]*:-)?"
+        r"(?P<value>[A-Za-z0-9][A-Za-z0-9_./+=-]{19,})"
+    )
     _patterns = [
         re.compile(r"AKIA[0-9A-Z]{16}"),
         re.compile(r"ghp_[A-Za-z0-9]{36}"),
@@ -292,6 +304,7 @@ class EmbeddedCredentialPatterns(Rule):
         re.compile(r"sk-[a-zA-Z0-9]{20,}"),
         re.compile(r"xox[bpras]-[A-Za-z0-9\-]+"),
         re.compile(r"glpat-[A-Za-z0-9\-]{20,}"),
+        _named_literal_re,
     ]
 
     # Placeholder patterns used in documentation/config examples
@@ -303,9 +316,27 @@ class EmbeddedCredentialPatterns(Rule):
 
     def evaluate(self, skill: ParsedSkill) -> list[Finding]:
         findings = []
+        seen: set[tuple[Path, int | None]] = set()
         for matched, line, fpath in search_skill_content(skill, self._patterns):
-            if self._placeholder_re.search(matched):
+            generic = self._named_literal_re.fullmatch(matched)
+            value = generic.group("value") if generic else matched
+            character_classes = sum(
+                bool(pattern.search(value))
+                for pattern in (
+                    re.compile(r"[a-z]"),
+                    re.compile(r"[A-Z]"),
+                    re.compile(r"[0-9]"),
+                    re.compile(r"[^A-Za-z0-9]"),
+                )
+            )
+            if (
+                self._placeholder_re.search(value)
+                or (generic and (len(set(value)) < 10 or character_classes < 3))
+                or (fpath, line) in seen
+            ):
                 continue
+            seen.add((fpath, line))
+            fingerprint = hashlib.sha256(value.encode("utf-8")).hexdigest()[:12]
             findings.append(Finding(
                 rule_id=self.rule_id,
                 title=self.title,
@@ -314,9 +345,16 @@ class EmbeddedCredentialPatterns(Rule):
                 category=FindingCategory.EXFILTRATION,
                 file_path=fpath,
                 line_number=line,
-                matched_content=matched[:200],
+                matched_content=(
+                    f"<redacted credential: sha256={fingerprint} length={len(value)}>"
+                ),
                 remediation="Skills must not contain hardcoded credentials or API keys.",
                 reference=None,
+                confidence=0.85,
+                context_note=(
+                    "The credential value is redacted from scanner output. Hard-coding is "
+                    "a secret-exposure risk, but does not independently establish malicious intent."
+                ),
             ))
         return findings
 
@@ -415,17 +453,21 @@ class SensitiveDataToNetwork(Rule):
                 allow_quoted_source=True,
             )
             scope = scope_for_finding(skill, fpath, line)
+            ordered_scope = scope_from_finding(skill, fpath, line)
             statement = statement_for_finding(skill, fpath, line)
             instructed_flow = bool(
                 fpath.name == "SKILL.md"
                 and statement
                 and _AGENT_EGRESS_RE.search(statement)
             )
+            read = _LOCAL_READ_RE.search(ordered_scope)
+            egress = _ACTIVE_EGRESS_RE.search(ordered_scope)
             scoped_flow = bool(
                 fpath.name != "SKILL.md"
                 and scope
-                and _LOCAL_READ_RE.search(scope)
-                and _ACTIVE_EGRESS_RE.search(scope)
+                and read
+                and egress
+                and read.start() <= egress.start()
             )
             if not direct_flow and not scoped_flow and not instructed_flow:
                 continue

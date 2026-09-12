@@ -108,28 +108,26 @@ def discover_bundled_files(skill_dir: Path) -> list[Path]:
     if not skill_dir.is_dir():
         return files
     root = skill_dir.resolve()
-    for ext in sorted(BUNDLED_EXTENSIONS):
-        for path in sorted(skill_dir.rglob(f"*{ext}")):
-            if path.is_symlink() or not path.is_file():
-                continue
-            try:
-                lexical_relative = path.relative_to(skill_dir)
-            except ValueError:
-                continue
-            cursor = skill_dir
-            if any(
-                (cursor := cursor / part).is_symlink()
-                for part in lexical_relative.parts
-            ):
-                continue
-            try:
-                relative = path.resolve().relative_to(root)
-            except ValueError:
-                continue
-            if path.name.lower() == "skill.md" or len(relative.parts) > MAX_BUNDLED_DEPTH:
-                continue
+    candidates: list[Path] = []
+    for child in sorted(skill_dir.iterdir()):
+        candidates.append(child)
+        if child.is_dir() and not child.is_symlink():
+            candidates.extend(sorted(child.iterdir()))
+    for path in candidates:
+        if (
+            path.is_symlink()
+            or not path.is_file()
+            or path.suffix.lower() not in BUNDLED_EXTENSIONS
+            or path.name.lower() == "skill.md"
+        ):
+            continue
+        try:
+            relative = path.resolve().relative_to(root)
+        except ValueError:
+            continue
+        if len(relative.parts) <= MAX_BUNDLED_DEPTH:
             files.append(path)
-    return files
+    return sorted(files)
 
 
 def parse_skill(path: Path) -> ParsedSkill:

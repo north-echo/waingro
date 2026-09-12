@@ -500,12 +500,49 @@ def assess_scan(
     else:
         verdict = AssessmentVerdict.CLEAN
 
-    dynamic_recommended = (
-        verdict in {AssessmentVerdict.CAPABILITY, AssessmentVerdict.SUSPICIOUS}
-        and capability.score >= 0.4
-        and result.security_tool_score < 0.5
-        and runtime_trace is None
+    trusted_runtime_risk = bool(
+        runtime_trace is not None
+        and runtime_trace.trusted
+        and any(
+            item.source == EvidenceSource.RUNTIME
+            and item.polarity == EvidencePolarity.RISK
+            for item in runtime_items
+        )
     )
+    if runtime_trace is None:
+        runtime_coverage = "not-run"
+    elif not runtime_trace.trusted:
+        runtime_coverage = "untrusted"
+    elif trusted_runtime_path:
+        runtime_coverage = "attack-path-observed"
+    elif trusted_runtime_risk:
+        runtime_coverage = "risk-behavior-observed"
+    else:
+        runtime_coverage = "no-relevant-behavior"
+
+    # An isolated run is coverage, not a box-check. A trace that only proves
+    # the interpreter started cannot retire a static attack path. High-priority
+    # recommendations are reserved for correlated suspicious paths; isolated
+    # dangerous primitives remain visible as medium-priority opportunities.
+    path_covered = trusted_runtime_path if (static_paths or direct_exfil) else trusted_runtime_risk
+    eligible_for_dynamic = (
+        capability.score >= 0.4
+        and result.security_tool_score < 0.5
+        and not path_covered
+    )
+    if verdict == AssessmentVerdict.SUSPICIOUS and eligible_for_dynamic:
+        dynamic_priority = "high"
+    elif verdict == AssessmentVerdict.CAPABILITY and eligible_for_dynamic:
+        dynamic_priority = "medium"
+    else:
+        dynamic_priority = "none"
+    dynamic_recommended = dynamic_priority == "high"
+    if (
+        dynamic_priority != "none"
+        and runtime_trace is not None
+        and runtime_trace.trusted
+    ):
+        missing.append("runtime-behavior-coverage")
     rationale = [
         f"Static capability score is {capability.score:.3f}; "
         "this measures dangerousness, not intent.",
@@ -519,6 +556,7 @@ def assess_scan(
             if runtime_trace.trusted
             else "Runtime evidence is untrusted and cannot independently establish intent."
         )
+        rationale.append(f"Runtime coverage is {runtime_coverage}.")
     if missing:
         rationale.append("Missing evidence: " + ", ".join(missing) + ".")
 
@@ -537,4 +575,6 @@ def assess_scan(
         missing_evidence=tuple(missing),
         rationale=tuple(rationale),
         dynamic_recommended=dynamic_recommended,
+        dynamic_priority=dynamic_priority,
+        runtime_coverage=runtime_coverage,
     )

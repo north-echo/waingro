@@ -14,7 +14,7 @@ def test_version_command():
     runner = CliRunner()
     result = runner.invoke(main, ["version"])
     assert result.exit_code == 0
-    assert "0.6.0" in result.output
+    assert "0.6.1" in result.output
 
 
 def test_scan_clean_console():
@@ -156,7 +156,8 @@ def test_assess_separates_static_capability_from_malicious_intent():
     assert result.exit_code == 0
     assert report["static_verdict"] == "SUSPICIOUS"
     assert report["verdict"] == "CAPABILITY"
-    assert report["assessment"]["dynamic_recommended"] is True
+    assert report["assessment"]["dynamic_recommended"] is False
+    assert report["assessment"]["dynamic_priority"] == "medium"
 
 
 def test_dynamic_plan_command_creates_non_authorized_plan(tmp_path):

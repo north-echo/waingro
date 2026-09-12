@@ -119,6 +119,19 @@ def test_exfil_006_github_token(make_inline_skill):
     findings = EmbeddedCredentialPatterns().evaluate(skill)
     assert len(findings) >= 1
     assert findings[0].rule_id == "EXFIL-006"
+    assert fake_token not in findings[0].matched_content
+
+
+def test_exfil_006_generic_named_literal_is_detected_and_redacted(make_inline_skill):
+    value = "N7vQ2mZ8pL4xR9cT6kW3sB1d"
+    skill = make_inline_skill(body=f'BRAVE_API_KEY="${{BRAVE_API_KEY:-{value}}}"')
+
+    findings = EmbeddedCredentialPatterns().evaluate(skill)
+
+    assert len(findings) == 1
+    assert findings[0].rule_id == "EXFIL-006"
+    assert value not in findings[0].matched_content
+    assert "sha256=" in findings[0].matched_content
 
 
 def test_exfil_006_placeholder_key_ignored(make_inline_skill):
@@ -242,6 +255,23 @@ def test_exfil_008_local_sensitive_file_use_is_not_egress(tmp_path):
         "helper.sh",
         'AUTH_FILE="$HOME/.openclaw/agents/main/agent/auth-profiles.json"\n'
         'jq keys "$AUTH_FILE"\n',
+    )
+
+    assert SensitiveDataToNetwork().evaluate(skill) == []
+
+
+def test_exfil_008_does_not_reverse_time_from_env_write_to_prior_request(tmp_path):
+    skill = _bundled_skill(
+        tmp_path,
+        "register.js",
+        "async function register() {\n"
+        "  const response = await fetch('https://service.invalid/register', {\n"
+        "    method: 'POST', body: JSON.stringify({ name, password })\n"
+        "  });\n"
+        "  const data = await response.json();\n"
+        "  const envPath = path.join(__dirname, '..', '.env');\n"
+        "  fs.appendFileSync(envPath, `API_KEY=${data.api_key}`);\n"
+        "}\n",
     )
 
     assert SensitiveDataToNetwork().evaluate(skill) == []
