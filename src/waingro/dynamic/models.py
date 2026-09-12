@@ -86,6 +86,26 @@ class IsolationRecord:
 
 
 @dataclass(frozen=True)
+class RuntimeCoverage:
+    required_event_types: tuple[RuntimeEventType, ...]
+    observed_event_types: tuple[RuntimeEventType, ...]
+    missing_event_types: tuple[RuntimeEventType, ...]
+    require_exit_zero: bool
+    exit_status_satisfied: bool
+    complete: bool
+
+    def to_dict(self) -> dict:
+        return {
+            "required_event_types": [item.value for item in self.required_event_types],
+            "observed_event_types": [item.value for item in self.observed_event_types],
+            "missing_event_types": [item.value for item in self.missing_event_types],
+            "require_exit_zero": self.require_exit_zero,
+            "exit_status_satisfied": self.exit_status_satisfied,
+            "complete": self.complete,
+        }
+
+
+@dataclass(frozen=True)
 class RuntimeTrace:
     run_id: str
     artifact_sha256: str
@@ -100,6 +120,7 @@ class RuntimeTrace:
     signature_verified: bool = False
     signature_identity: str | None = None
     base_image_verified: bool = False
+    coverage: RuntimeCoverage | None = None
     warnings: tuple[str, ...] = field(default_factory=tuple)
     schema_version: str = "1.0"
 
@@ -130,6 +151,7 @@ class RuntimeTrace:
             "signature_verified": self.signature_verified,
             "signature_identity": self.signature_identity,
             "base_image_verified": self.base_image_verified,
+            "coverage": self.coverage.to_dict() if self.coverage else None,
             "trusted": self.trusted,
             "warnings": list(self.warnings),
         }

@@ -109,6 +109,43 @@ def is_generated_or_vendored(path: Path, content: str) -> bool:
     return any(len(line) > MAX_CORRELATION_LINE for line in content.splitlines())
 
 
+def _skill_cache(skill: ParsedSkill) -> dict[tuple[object, ...], object]:
+    """Return an analysis-lifetime cache without retaining input after the scan."""
+    cache = getattr(skill, "_waingro_dataflow_cache", None)
+    if cache is None:
+        cache = {}
+        skill._waingro_dataflow_cache = cache
+    return cache
+
+
+def _is_generated_or_vendored(
+    skill: ParsedSkill,
+    path: Path,
+    content: str,
+) -> bool:
+    """Cache an otherwise whole-file check for repeated finding correlation."""
+    cache = _skill_cache(skill)
+    key = ("generated-or-vendored", path, id(content))
+    cached = cache.get(key)
+    if isinstance(cached, bool):
+        return cached
+    result = is_generated_or_vendored(path, content)
+    cache[key] = result
+    return result
+
+
+def _content_lines(skill: ParsedSkill, content: str) -> list[str]:
+    """Split immutable source once per scan instead of once per finding."""
+    cache = _skill_cache(skill)
+    key = ("content-lines", id(content))
+    cached = cache.get(key)
+    if isinstance(cached, list):
+        return cached
+    lines = content.splitlines()
+    cache[key] = lines
+    return lines
+
+
 def _source_for_finding(
     skill: ParsedSkill,
     file_path: Path,
@@ -548,9 +585,9 @@ def statement_for_finding(
     included, while unrelated neighboring examples are not.
     """
     content, line_base = _source_for_finding(skill, file_path, line_number)
-    if not content or is_generated_or_vendored(file_path, content):
+    if not content or _is_generated_or_vendored(skill, file_path, content):
         return ""
-    lines = content.splitlines()
+    lines = _content_lines(skill, content)
     index = (line_number or line_base + 1) - line_base - 1
     if not 0 <= index < len(lines):
         return ""
@@ -565,9 +602,9 @@ def scope_for_finding(
 ) -> str:
     """Return the lexical function or fenced scope containing a finding."""
     content, line_base = _source_for_finding(skill, file_path, line_number)
-    if not content or is_generated_or_vendored(file_path, content):
+    if not content or _is_generated_or_vendored(skill, file_path, content):
         return ""
-    lines = content.splitlines()
+    lines = _content_lines(skill, content)
     index = (line_number or line_base + 1) - line_base - 1
     if not 0 <= index < len(lines):
         return ""
@@ -587,9 +624,9 @@ def scope_from_finding(
     source was transmitted.
     """
     content, line_base = _source_for_finding(skill, file_path, line_number)
-    if not content or is_generated_or_vendored(file_path, content):
+    if not content or _is_generated_or_vendored(skill, file_path, content):
         return ""
-    lines = content.splitlines()
+    lines = _content_lines(skill, content)
     index = (line_number or line_base + 1) - line_base - 1
     if not 0 <= index < len(lines):
         return ""
@@ -616,7 +653,7 @@ def expression_reaches_sink(
     excluded because their lexical layout is not reliable evidence.
     """
     content, line_base = _source_for_finding(skill, file_path, line_number)
-    if not content or is_generated_or_vendored(file_path, content):
+    if not content or _is_generated_or_vendored(skill, file_path, content):
         return False
     if file_path.suffix.lower() == ".py":
         content = _without_python_strings_and_comments(
@@ -711,7 +748,7 @@ def expression_reaches_execution(
 ) -> bool:
     """Whether a source expression directly or by assignment reaches a sink."""
     content, line_base = _source_for_finding(skill, file_path, line_number)
-    if not content or is_generated_or_vendored(file_path, content):
+    if not content or _is_generated_or_vendored(skill, file_path, content):
         return False
     if file_path.suffix.lower() == ".py":
         content = _without_python_strings_and_comments(content)
@@ -805,7 +842,7 @@ def literal_reaches_decode_and_execution(
 ) -> bool:
     """Whether an encoded literal is decoded and the result reaches execution."""
     content, line_base = _source_for_finding(skill, file_path, line_number)
-    if not content or is_generated_or_vendored(file_path, content):
+    if not content or _is_generated_or_vendored(skill, file_path, content):
         return False
     if file_path.suffix.lower() == ".py":
         literal_content = _without_python_strings_and_comments(content, mask_strings=False)

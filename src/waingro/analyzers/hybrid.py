@@ -426,7 +426,10 @@ def assess_scan(
         and item.polarity == EvidencePolarity.RISK
         for item in evidence
     )
-    direct_exfil = any(finding.rule_id == "NET-004" for finding in result.findings)
+    direct_exfil = any(
+        finding.rule_id in {"BEHAV-003", "EXFIL-008", "EXFIL-009", "NET-004", "NET-005", "NET-007"}
+        for finding in result.findings
+    )
 
     if exact_intel:
         maliciousness = 0.99
@@ -489,10 +492,10 @@ def assess_scan(
 
     if maliciousness >= 0.85 and (trusted_multi_source_exfil or exact_intel):
         verdict = AssessmentVerdict.MALICIOUS
+    elif result.security_tool_score >= 0.3 and not trusted_runtime_path:
+        verdict = AssessmentVerdict.REVIEW
     elif maliciousness >= 0.6:
         verdict = AssessmentVerdict.SUSPICIOUS
-    elif result.security_tool_score >= 0.5 and not trusted_runtime_path:
-        verdict = AssessmentVerdict.REVIEW
     elif capability.score > 0 or severe_artifact_anomaly:
         verdict = AssessmentVerdict.CAPABILITY
     elif any(item.polarity == EvidencePolarity.RISK for item in evidence):
@@ -509,10 +512,18 @@ def assess_scan(
             for item in runtime_items
         )
     )
+    scenario_complete = bool(
+        runtime_trace is not None
+        and runtime_trace.coverage is not None
+        and runtime_trace.coverage.complete
+    )
+    legacy_trace = runtime_trace is not None and runtime_trace.coverage is None
     if runtime_trace is None:
         runtime_coverage = "not-run"
     elif not runtime_trace.trusted:
         runtime_coverage = "untrusted"
+    elif runtime_trace.coverage is not None and not runtime_trace.coverage.complete:
+        runtime_coverage = "scenario-incomplete"
     elif trusted_runtime_path:
         runtime_coverage = "attack-path-observed"
     elif trusted_runtime_risk:
@@ -524,10 +535,13 @@ def assess_scan(
     # the interpreter started cannot retire a static attack path. High-priority
     # recommendations are reserved for correlated suspicious paths; isolated
     # dangerous primitives remain visible as medium-priority opportunities.
-    path_covered = trusted_runtime_path if (static_paths or direct_exfil) else trusted_runtime_risk
+    coverage_satisfied = legacy_trace or scenario_complete
+    path_covered = (
+        trusted_runtime_path if (static_paths or direct_exfil) else trusted_runtime_risk
+    ) and coverage_satisfied
     eligible_for_dynamic = (
         capability.score >= 0.4
-        and result.security_tool_score < 0.5
+        and result.security_tool_score < 0.3
         and not path_covered
     )
     if verdict == AssessmentVerdict.SUSPICIOUS and eligible_for_dynamic:
@@ -542,7 +556,11 @@ def assess_scan(
         and runtime_trace is not None
         and runtime_trace.trusted
     ):
-        missing.append("runtime-behavior-coverage")
+        missing.append(
+            "runtime-scenario-coverage"
+            if runtime_trace.coverage is not None and not runtime_trace.coverage.complete
+            else "runtime-behavior-coverage"
+        )
     rationale = [
         f"Static capability score is {capability.score:.3f}; "
         "this measures dangerousness, not intent.",

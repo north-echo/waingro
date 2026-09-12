@@ -19,6 +19,29 @@ from waingro.models import ArtifactFileDigest, ArtifactIdentity
 _DIGEST_RE = re.compile(r"^[0-9a-f]{64}$")
 _IMAGE_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*\.qcow2$")
 _ENTRYPOINT_RE = re.compile(r"^[A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)?$")
+_EXECUTABLE_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._+-]{0,63}$")
+_ENVIRONMENT_RE = re.compile(r"^[A-Z][A-Z0-9_]{0,63}$")
+_INTERPRETER_EXECUTABLE = {"python": "python3", "node": "node", "shell": "bash"}
+SYNTHETIC_VALUE_PROFILES = frozenset(
+    {"access-key", "api-key", "password", "secret-key", "token"}
+)
+_RESERVED_ENVIRONMENT_NAMES = frozenset(
+    {"BASH_ENV", "ENV", "HOME", "IFS", "PATH", "SHELL", "SHELLOPTS", "USER"}
+)
+_RESERVED_ENVIRONMENT_PREFIXES = ("LD_", "NODE_", "PYTHON", "WAINGRO_")
+COVERAGE_EVENT_TYPES = frozenset(
+    {"credential", "defense-evasion", "dns", "file", "network", "persistence", "process"}
+)
+
+
+def synthetic_environment_name_allowed(name: str) -> bool:
+    return bool(
+        _ENVIRONMENT_RE.fullmatch(name)
+        and name not in _RESERVED_ENVIRONMENT_NAMES
+        and not name.startswith(_RESERVED_ENVIRONMENT_PREFIXES)
+    )
+
+
 MAX_ARTIFACT_FILES = 10_000
 MAX_ARTIFACT_BYTES = 1024 * 1024 * 1024
 
@@ -79,8 +102,12 @@ class DynamicPlan:
     interpreter: str | None
     entrypoint: str | None
     arguments: tuple[str, ...]
+    required_executables: tuple[str, ...]
+    synthetic_environment: tuple[tuple[str, str], ...]
+    required_event_types: tuple[str, ...]
+    require_exit_zero: bool
     created_at: str
-    schema_version: str = "1.0"
+    schema_version: str = "1.1"
 
     def to_dict(self) -> dict:
         return {
@@ -119,6 +146,14 @@ class DynamicPlan:
                         "interpreter": self.interpreter,
                         "entrypoint": self.entrypoint,
                         "arguments": list(self.arguments),
+                        "required_executables": list(self.required_executables),
+                        "synthetic_environment": {
+                            name: profile for name, profile in self.synthetic_environment
+                        },
+                        "coverage": {
+                            "required_event_types": list(self.required_event_types),
+                            "require_exit_zero": self.require_exit_zero,
+                        },
                     }
                     if self.interpreter and self.entrypoint
                     else None
@@ -165,6 +200,10 @@ def build_dynamic_plan(
     interpreter: str | None = None,
     entrypoint: str | None = None,
     arguments: tuple[str, ...] = (),
+    required_executables: tuple[str, ...] = (),
+    synthetic_environment: tuple[tuple[str, str], ...] = (),
+    required_event_types: tuple[str, ...] = (),
+    require_exit_zero: bool = False,
 ) -> DynamicPlan:
     _validate_artifact(artifact)
     digest = base_image_sha256.lower()
@@ -182,6 +221,8 @@ def build_dynamic_plan(
         raise ValueError("interpreter and entrypoint must be provided together")
     if authorize_execution and (interpreter is None or entrypoint is None):
         raise ValueError("authorized execution requires an explicit scenario")
+    if authorize_execution and not required_event_types:
+        raise ValueError("authorized execution requires at least one coverage event")
     if interpreter is not None and interpreter not in {"python", "node", "shell"}:
         raise ValueError("scenario interpreter must be python, node, or shell")
     if entrypoint is not None:
@@ -207,6 +248,35 @@ def build_dynamic_plan(
         len(argument) > 1024 or "\0" in argument for argument in arguments
     ):
         raise ValueError("scenario arguments exceed policy limits")
+    if len(required_executables) != len(set(required_executables)):
+        raise ValueError("required executables violate policy")
+    executables = tuple(required_executables)
+    if interpreter is not None:
+        executables = tuple(dict.fromkeys((*executables, _INTERPRETER_EXECUTABLE[interpreter])))
+    if (
+        len(executables) > 32
+        or any(not _EXECUTABLE_RE.fullmatch(item) for item in executables)
+    ):
+        raise ValueError("required executables violate policy")
+    environment = tuple(synthetic_environment)
+    environment_names = [name for name, _profile in environment]
+    if (
+        len(environment) > 16
+        or len(environment_names) != len(set(environment_names))
+        or any(
+            not synthetic_environment_name_allowed(name)
+            or profile not in SYNTHETIC_VALUE_PROFILES
+            for name, profile in environment
+        )
+    ):
+        raise ValueError("synthetic environment configuration violates policy")
+    coverage_events = tuple(dict.fromkeys(required_event_types))
+    if (
+        len(coverage_events) > len(COVERAGE_EVENT_TYPES)
+        or len(coverage_events) != len(required_event_types)
+        or any(item not in COVERAGE_EVENT_TYPES for item in coverage_events)
+    ):
+        raise ValueError("coverage event requirements violate policy")
     base_name = Path(base_image).name
     if (
         not base_name
@@ -234,6 +304,10 @@ def build_dynamic_plan(
         interpreter=interpreter,
         entrypoint=entrypoint,
         arguments=tuple(arguments),
+        required_executables=executables,
+        synthetic_environment=environment,
+        required_event_types=coverage_events,
+        require_exit_zero=require_exit_zero,
         created_at=stamp,
     )
     return replace(provisional, job_id=dynamic_job_id(provisional.to_dict()))

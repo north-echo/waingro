@@ -158,8 +158,8 @@ class Base64Strings(Rule):
 @register_rule
 class StringConcatenation(Rule):
     rule_id = "OBFUSC-002"
-    title = "String concatenation to hide commands"
-    description = "Detects variable concatenation patterns used to evade detection"
+    title = "String concatenation primitive"
+    description = "Detects concatenation forms that can construct strings dynamically"
 
     _patterns = [
         re.compile(r'\$\{[A-Z_]+\}\$\{[A-Z_]+\}'),
@@ -184,6 +184,11 @@ class StringConcatenation(Rule):
                 matched_content=matched[:200],
                 remediation="Review concatenated strings for hidden commands.",
                 reference=None,
+                confidence=0.55,
+                context_note=(
+                    "Concatenation is a construction primitive, not evidence that the result "
+                    "is executed or used to evade review."
+                ),
             ))
         return findings
 

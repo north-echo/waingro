@@ -15,6 +15,7 @@ from waingro.dynamic.runner import (
     _build_domain_xml,
     _extract_trace,
     _load_plan,
+    _verify_base_capabilities,
 )
 from waingro.dynamic.trace import (
     RuntimeTraceError,
@@ -151,10 +152,12 @@ def test_authorized_dynamic_plan_requires_scanned_typed_entrypoint():
         interpreter="python",
         entrypoint="scripts/run.py",
         arguments=("--safe-fixture",),
+        required_event_types=("process",),
     )
 
     assert plan.execution_authorized is True
     assert plan.to_dict()["execution"]["scenario"]["arguments"] == ["--safe-fixture"]
+    assert plan.required_executables == ("python3",)
     with pytest.raises(ValueError, match="not in the scanned artifact"):
         build_dynamic_plan(
             _script_artifact(),
@@ -163,7 +166,121 @@ def test_authorized_dynamic_plan_requires_scanned_typed_entrypoint():
             authorize_execution=True,
             interpreter="python",
             entrypoint="scripts/missing.py",
+            required_event_types=("process",),
         )
+
+
+def test_dynamic_plan_binds_prerequisites_canaries_and_coverage():
+    plan = build_dynamic_plan(
+        _script_artifact(),
+        base_image="waingro-base.qcow2",
+        base_image_sha256="c" * 64,
+        authorize_execution=True,
+        interpreter="python",
+        entrypoint="scripts/run.py",
+        required_executables=("curl",),
+        synthetic_environment=(("SERVICE_TOKEN", "token"),),
+        required_event_types=("credential", "network"),
+        require_exit_zero=True,
+    )
+
+    scenario = plan.to_dict()["execution"]["scenario"]
+    assert scenario["required_executables"] == ["curl", "python3"]
+    assert scenario["synthetic_environment"] == {"SERVICE_TOKEN": "token"}
+    assert scenario["coverage"] == {
+        "required_event_types": ["credential", "network"],
+        "require_exit_zero": True,
+    }
+
+
+def test_authorized_dynamic_plan_requires_explicit_coverage():
+    with pytest.raises(ValueError, match="coverage event"):
+        build_dynamic_plan(
+            _script_artifact(),
+            base_image="waingro-base.qcow2",
+            base_image_sha256="c" * 64,
+            authorize_execution=True,
+            interpreter="python",
+            entrypoint="scripts/run.py",
+        )
+
+    with pytest.raises(ValueError, match="synthetic environment"):
+        build_dynamic_plan(
+            _script_artifact(),
+            base_image="waingro-base.qcow2",
+            base_image_sha256="c" * 64,
+            interpreter="python",
+            entrypoint="scripts/run.py",
+            synthetic_environment=(("PYTHONPATH", "token"),),
+        )
+
+
+def test_base_capability_manifest_is_digest_bound_and_fail_closed(tmp_path):
+    image = tmp_path / "base.qcow2"
+    image.write_bytes(b"pinned image")
+    digest = hashlib.sha256(image.read_bytes()).hexdigest()
+    manifest = image.with_suffix(".qcow2.capabilities.json")
+    manifest.write_text(
+        json.dumps(
+            {
+                "schema_version": "1.0",
+                "base_image_sha256": digest,
+                "executables": ["bash", "python3"],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    _verify_base_capabilities(image, digest, ["python3"])
+    with pytest.raises(DynamicRunnerError, match="lacks required"):
+        _verify_base_capabilities(image, digest, ["node"])
+    manifest.unlink()
+    with pytest.raises(DynamicRunnerError, match="missing or invalid"):
+        _verify_base_capabilities(image, digest, ["python3"])
+
+
+def test_runtime_trace_validates_explicit_coverage(tmp_path):
+    raw = _trace()
+    raw["schema_version"] = "1.1"
+    raw["exit_status"] = "exit-0"
+    raw["coverage"] = {
+        "required_event_types": ["process", "network"],
+        "observed_event_types": ["process"],
+        "missing_event_types": ["network"],
+        "require_exit_zero": True,
+        "exit_status_satisfied": True,
+        "complete": False,
+    }
+    path = tmp_path / "trace.json"
+    path.write_text(json.dumps(raw), encoding="utf-8")
+
+    trace = load_runtime_trace(path, expected_artifact_sha256="a" * 64)
+    assert trace.coverage is not None
+    assert trace.coverage.complete is False
+    raw["coverage"]["complete"] = True
+    path.write_text(json.dumps(raw), encoding="utf-8")
+    with pytest.raises(RuntimeTraceError, match="do not match observations"):
+        load_runtime_trace(path, expected_artifact_sha256="a" * 64)
+
+
+def test_runtime_trace_never_counts_timeout_as_complete_coverage(tmp_path):
+    raw = _trace()
+    raw["schema_version"] = "1.1"
+    raw["exit_status"] = "timeout"
+    raw["coverage"] = {
+        "required_event_types": ["process"],
+        "observed_event_types": ["process"],
+        "missing_event_types": [],
+        "require_exit_zero": False,
+        "exit_status_satisfied": False,
+        "complete": False,
+    }
+    path = tmp_path / "trace.json"
+    path.write_text(json.dumps(raw), encoding="utf-8")
+
+    trace = load_runtime_trace(path, expected_artifact_sha256="a" * 64)
+    assert trace.coverage is not None
+    assert trace.coverage.complete is False
 
 
 def test_runtime_trace_binds_to_artifact_and_is_untrusted_without_signature(tmp_path):
@@ -291,6 +408,7 @@ def test_runner_plan_loader_and_domain_xml_have_no_host_share_or_default_network
         authorize_execution=True,
         interpreter="python",
         entrypoint="scripts/run.py",
+        required_event_types=("process",),
     )
     plan_path = tmp_path / "plan.json"
     write_plan(plan, plan_path)
@@ -319,6 +437,7 @@ def test_runner_plan_loader_rejects_tampered_artifact_inventory(tmp_path):
         authorize_execution=True,
         interpreter="python",
         entrypoint="scripts/run.py",
+        required_event_types=("process",),
     ).to_dict()
     plan["artifact"]["total_bytes"] += 1
     plan_path = tmp_path / "plan.json"
@@ -355,6 +474,7 @@ def test_benign_runtime_fixture_produces_an_authorized_plan():
         authorize_execution=True,
         interpreter="python",
         entrypoint="scripts/run.py",
+        required_event_types=("process",),
     )
 
     assert plan.artifact_sha256 == result.artifact_identity.sha256
@@ -372,6 +492,7 @@ def test_adversarial_runtime_fixture_produces_an_artifact_bound_plan():
         authorize_execution=True,
         interpreter="python",
         entrypoint="scripts/run.py",
+        required_event_types=("credential", "network"),
     )
 
     assert plan.artifact_sha256 == result.artifact_identity.sha256

@@ -621,6 +621,34 @@ def dynamic_preflight() -> None:
     multiple=True,
     help="Literal argument; never shell parsed.",
 )
+@click.option(
+    "--require-executable",
+    "required_executables",
+    multiple=True,
+    help="Guest executable required by the scenario; checked before VM boot.",
+)
+@click.option(
+    "--synthetic-env",
+    "synthetic_environment",
+    multiple=True,
+    metavar="NAME=PROFILE",
+    help="Inject a named guest-only canary using a fixed value profile.",
+)
+@click.option(
+    "--require-event",
+    "required_event_types",
+    multiple=True,
+    type=click.Choice(
+        ["credential", "defense-evasion", "dns", "file", "network", "persistence", "process"]
+    ),
+    help="Observable event required for complete scenario coverage.",
+)
+@click.option(
+    "--require-exit-zero",
+    is_flag=True,
+    default=False,
+    help="Require a zero candidate exit status for complete scenario coverage.",
+)
 @click.option("-o", "--output", type=click.Path(path_type=Path), required=True)
 def dynamic_plan(
     path: Path,
@@ -633,6 +661,10 @@ def dynamic_plan(
     interpreter: str | None,
     entrypoint: str | None,
     arguments: tuple[str, ...],
+    required_executables: tuple[str, ...],
+    synthetic_environment: tuple[str, ...],
+    required_event_types: tuple[str, ...],
+    require_exit_zero: bool,
     output: Path,
 ) -> None:
     """Create a non-overwriting, artifact-bound hanna2 execution plan."""
@@ -640,6 +672,12 @@ def dynamic_plan(
         result = scan_skill(path)
         if result.artifact_identity is None:
             raise ValueError("scan did not produce an artifact identity")
+        parsed_environment = []
+        for item in synthetic_environment:
+            name, separator, profile = item.partition("=")
+            if not separator:
+                raise ValueError("--synthetic-env must use NAME=PROFILE")
+            parsed_environment.append((name, profile))
         plan = build_dynamic_plan(
             result.artifact_identity,
             base_image=base_image,
@@ -651,6 +689,10 @@ def dynamic_plan(
             interpreter=interpreter,
             entrypoint=entrypoint,
             arguments=arguments,
+            required_executables=required_executables,
+            synthetic_environment=tuple(parsed_environment),
+            required_event_types=required_event_types,
+            require_exit_zero=require_exit_zero,
         )
         write_plan(plan, output)
     except (OSError, ValueError) as exc:

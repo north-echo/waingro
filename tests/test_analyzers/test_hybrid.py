@@ -3,7 +3,13 @@
 from pathlib import Path
 
 from waingro.analyzers.hybrid import assess_scan
-from waingro.dynamic.models import IsolationRecord, RuntimeEvent, RuntimeEventType, RuntimeTrace
+from waingro.dynamic.models import (
+    IsolationRecord,
+    RuntimeCoverage,
+    RuntimeEvent,
+    RuntimeEventType,
+    RuntimeTrace,
+)
 from waingro.ecosystem import EcosystemContext
 from waingro.evidence import AssessmentVerdict
 from waingro.resolvers.osv import PackageVulnerabilityResult, VulnerabilityRecord
@@ -99,6 +105,16 @@ def test_same_file_static_attack_chain_can_be_suspicious_but_not_malicious():
     assert assessment.dimensions["maliciousness_confidence"].score < 0.85
 
 
+def test_probable_security_tool_is_review_not_dynamic_execution_target():
+    result = scan_skill(FIXTURES / "malicious" / "clawhavoc-base64")
+    result.security_tool_score = 0.4
+
+    assessment = assess_scan(result)
+
+    assert assessment.verdict == AssessmentVerdict.REVIEW
+    assert assessment.dynamic_priority == "none"
+
+
 def test_empty_authenticated_trace_does_not_retire_static_attack_path():
     result = scan_skill(FIXTURES / "malicious" / "clawhavoc-base64")
     trace = _trace(trusted=True, credential_targets=0)
@@ -123,6 +139,30 @@ def test_empty_authenticated_trace_does_not_retire_static_attack_path():
     assert assessment.dynamic_priority == "high"
     assert assessment.runtime_coverage == "no-relevant-behavior"
     assert "runtime-behavior-coverage" in assessment.missing_evidence
+
+
+def test_incomplete_explicit_scenario_does_not_retire_static_attack_path():
+    result = scan_skill(FIXTURES / "malicious" / "clawhavoc-base64")
+    trace = _trace(trusted=True, credential_targets=0)
+    trace = RuntimeTrace(
+        **{
+            **trace.__dict__,
+            "coverage": RuntimeCoverage(
+                required_event_types=(RuntimeEventType.CREDENTIAL, RuntimeEventType.NETWORK),
+                observed_event_types=(RuntimeEventType.NETWORK,),
+                missing_event_types=(RuntimeEventType.CREDENTIAL,),
+                require_exit_zero=True,
+                exit_status_satisfied=False,
+                complete=False,
+            ),
+        }
+    )
+
+    assessment = assess_scan(result, runtime_trace=trace)
+
+    assert assessment.runtime_coverage == "scenario-incomplete"
+    assert assessment.dynamic_priority == "high"
+    assert "runtime-scenario-coverage" in assessment.missing_evidence
 
 
 def test_authenticated_runtime_exfiltration_chain_can_establish_maliciousness():

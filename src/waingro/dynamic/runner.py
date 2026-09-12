@@ -30,17 +30,24 @@ from pathlib import Path, PurePosixPath
 
 import yaml
 
-from waingro.dynamic.plan import dynamic_job_id
+from waingro.dynamic.plan import (
+    COVERAGE_EVENT_TYPES,
+    SYNTHETIC_VALUE_PROFILES,
+    dynamic_job_id,
+    synthetic_environment_name_allowed,
+)
 from waingro.dynamic.trace import MAX_TRACE_BYTES, load_runtime_trace
 from waingro.scanner import scan_skill
 
 MAX_PLAN_BYTES = 2 * 1024 * 1024
+MAX_CAPABILITY_MANIFEST_BYTES = 64 * 1024
 TRACE_BEGIN = "WAINGRO_TRACE_BEGIN"
 TRACE_END = "WAINGRO_TRACE_END"
 _JOB_RE = re.compile(r"^waingro-[0-9a-f]{20}$")
 _DIGEST_RE = re.compile(r"^[0-9a-f]{64}$")
 _IMAGE_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*\.qcow2$")
 _ENTRYPOINT_RE = re.compile(r"^[A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)?$")
+_EXECUTABLE_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._+-]{0,63}$")
 MAX_ARTIFACT_FILES = 10_000
 MAX_ARTIFACT_BYTES = 1024 * 1024 * 1024
 
@@ -58,6 +65,7 @@ class DynamicRunResult:
     exit_status: str
     event_count: int
     timed_out: bool
+    coverage_complete: bool
 
     def to_dict(self) -> dict:
         return {
@@ -68,6 +76,7 @@ class DynamicRunResult:
             "exit_status": self.exit_status,
             "event_count": self.event_count,
             "timed_out": self.timed_out,
+            "coverage_complete": self.coverage_complete,
         }
 
 
@@ -110,7 +119,7 @@ def _load_plan(path: Path) -> dict:
         plan = json.loads(payload)
     except (UnicodeDecodeError, json.JSONDecodeError) as exc:
         raise DynamicRunnerError("dynamic plan is not valid JSON") from exc
-    if not isinstance(plan, dict) or plan.get("schema_version") != "1.0":
+    if not isinstance(plan, dict) or plan.get("schema_version") != "1.1":
         raise DynamicRunnerError("unsupported dynamic plan schema")
     job_id = plan.get("job_id")
     artifact = plan.get("artifact")
@@ -185,6 +194,48 @@ def _load_plan(path: Path) -> dict:
     }
     if relative.suffix.lower() not in allowed_suffixes[scenario["interpreter"]]:
         raise DynamicRunnerError("dynamic scenario interpreter and entrypoint disagree")
+    required_executables = scenario.get("required_executables")
+    if (
+        not isinstance(required_executables, list)
+        or not required_executables
+        or len(required_executables) > 32
+        or len(required_executables) != len(set(required_executables))
+        or any(
+            not isinstance(item, str) or not _EXECUTABLE_RE.fullmatch(item)
+            for item in required_executables
+        )
+    ):
+        raise DynamicRunnerError("dynamic scenario executable requirements violate policy")
+    expected_interpreter = {"python": "python3", "node": "node", "shell": "bash"}[
+        scenario["interpreter"]
+    ]
+    if expected_interpreter not in required_executables:
+        raise DynamicRunnerError("dynamic scenario does not require its interpreter")
+    synthetic_environment = scenario.get("synthetic_environment")
+    if (
+        not isinstance(synthetic_environment, dict)
+        or len(synthetic_environment) > 16
+        or any(
+            not isinstance(name, str)
+            or not synthetic_environment_name_allowed(name)
+            or profile not in SYNTHETIC_VALUE_PROFILES
+            for name, profile in synthetic_environment.items()
+        )
+    ):
+        raise DynamicRunnerError("dynamic scenario synthetic environment violates policy")
+    coverage = scenario.get("coverage")
+    if not isinstance(coverage, dict):
+        raise DynamicRunnerError("dynamic scenario coverage requirements are missing")
+    required_event_types = coverage.get("required_event_types")
+    if (
+        not isinstance(required_event_types, list)
+        or not required_event_types
+        or len(required_event_types) > len(COVERAGE_EVENT_TYPES)
+        or len(required_event_types) != len(set(required_event_types))
+        or any(item not in COVERAGE_EVENT_TYPES for item in required_event_types)
+        or not isinstance(coverage.get("require_exit_zero"), bool)
+    ):
+        raise DynamicRunnerError("dynamic scenario coverage requirements violate policy")
     records = artifact.get("files")
     file_count = artifact.get("file_count")
     total_bytes = artifact.get("total_bytes")
@@ -229,6 +280,35 @@ def _load_plan(path: Path) -> dict:
     if computed_total != total_bytes or scope_digest.hexdigest() != digest:
         raise DynamicRunnerError("dynamic artifact inventory does not match its digest")
     return plan
+
+
+def _verify_base_capabilities(base_image: Path, base_digest: str, required: list[str]) -> None:
+    manifest_path = base_image.with_suffix(base_image.suffix + ".capabilities.json")
+    try:
+        payload = _bounded_regular_file(manifest_path, MAX_CAPABILITY_MANIFEST_BYTES)
+        manifest = json.loads(payload)
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise DynamicRunnerError("base image capability manifest is missing or invalid") from exc
+    if not isinstance(manifest, dict):
+        raise DynamicRunnerError("base image capability manifest violates policy")
+    executables = manifest.get("executables")
+    if (
+        manifest.get("schema_version") != "1.0"
+        or manifest.get("base_image_sha256") != base_digest
+        or not isinstance(executables, list)
+        or len(executables) > 256
+        or len(executables) != len(set(executables))
+        or any(
+            not isinstance(item, str) or not _EXECUTABLE_RE.fullmatch(item)
+            for item in executables
+        )
+    ):
+        raise DynamicRunnerError("base image capability manifest violates policy")
+    missing = [item for item in required if item not in executables]
+    if missing:
+        raise DynamicRunnerError(
+            "base image capability manifest lacks required executables: " + ", ".join(missing)
+        )
 
 
 def _run_command(arguments: list[str], *, timeout: int = 60) -> subprocess.CompletedProcess:
@@ -492,6 +572,11 @@ def run_dynamic_job(
     observed_base_digest = _bounded_regular_file(base_image).decode("ascii")
     if observed_base_digest != plan["execution"]["base_image_sha256"]:
         raise DynamicRunnerError("base image digest does not match the authorized plan")
+    _verify_base_capabilities(
+        base_image,
+        observed_base_digest,
+        plan["execution"]["scenario"]["required_executables"],
+    )
     timed_out = False
     domain_started = False
     with tempfile.TemporaryDirectory(prefix=f"{job_id}-", dir=work_root) as temporary:
@@ -638,4 +723,5 @@ def run_dynamic_job(
         exit_status=loaded.exit_status,
         event_count=len(loaded.events),
         timed_out=False,
+        coverage_complete=bool(loaded.coverage and loaded.coverage.complete),
     )

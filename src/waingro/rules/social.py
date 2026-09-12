@@ -96,7 +96,9 @@ def _nearest_known(pkg: str, threshold: int = 2) -> str | None:
     if len(pkg) < _MIN_TYPOSQUAT_LEN:
         return None
     best, best_dist = None, threshold + 1
-    for good in KNOWN_GOOD_PACKAGES:
+    # Stable ordering makes equal-distance ties reproducible across processes
+    # with different hash seeds and across independent corpus runs.
+    for good in sorted(KNOWN_GOOD_PACKAGES):
         if abs(len(good) - len(pkg)) > threshold or len(good) < _MIN_TYPOSQUAT_LEN:
             continue
         dist = _levenshtein(pkg, good)

@@ -14,7 +14,7 @@ def test_version_command():
     runner = CliRunner()
     result = runner.invoke(main, ["version"])
     assert result.exit_code == 0
-    assert "0.6.1" in result.output
+    assert "0.7.0" in result.output
 
 
 def test_scan_clean_console():
@@ -182,6 +182,42 @@ def test_dynamic_plan_command_creates_non_authorized_plan(tmp_path):
     assert report["execution"]["authorized"] is False
     assert report["execution"]["expected_host"] == "hanna2"
     assert report["execution"]["host_shares"] is False
+
+
+def test_dynamic_plan_command_records_scenario_contract(tmp_path):
+    output = tmp_path / "plan.json"
+    result = CliRunner().invoke(
+        main,
+        [
+            "dynamic",
+            "plan",
+            str(FIXTURES_DIR / "dynamic" / "benign-runtime"),
+            "--base-image",
+            "waingro-base.qcow2",
+            "--base-image-sha256",
+            "a" * 64,
+            "--authorize-execution",
+            "--interpreter",
+            "python",
+            "--entrypoint",
+            "scripts/run.py",
+            "--require-executable",
+            "curl",
+            "--synthetic-env",
+            "SERVICE_TOKEN=token",
+            "--require-event",
+            "process",
+            "--require-exit-zero",
+            "--output",
+            str(output),
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    scenario = json.loads(output.read_text(encoding="utf-8"))["execution"]["scenario"]
+    assert scenario["required_executables"] == ["curl", "python3"]
+    assert scenario["synthetic_environment"] == {"SERVICE_TOKEN": "token"}
+    assert scenario["coverage"]["required_event_types"] == ["process"]
 
 
 def test_scan_fail_on_critical():

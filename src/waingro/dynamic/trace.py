@@ -13,7 +13,13 @@ import tempfile
 from datetime import datetime
 from pathlib import Path
 
-from waingro.dynamic.models import IsolationRecord, RuntimeEvent, RuntimeEventType, RuntimeTrace
+from waingro.dynamic.models import (
+    IsolationRecord,
+    RuntimeCoverage,
+    RuntimeEvent,
+    RuntimeEventType,
+    RuntimeTrace,
+)
 
 MAX_TRACE_BYTES = 20 * 1024 * 1024
 MAX_EVENTS = 100_000
@@ -174,6 +180,61 @@ def _event(raw: object, index: int) -> RuntimeEvent:
     )
 
 
+def _event_types(value: object, field: str) -> tuple[RuntimeEventType, ...]:
+    if not isinstance(value, list) or len(value) > len(RuntimeEventType):
+        raise RuntimeTraceError(f"invalid runtime trace field: {field}")
+    try:
+        parsed = tuple(RuntimeEventType(item) for item in value)
+    except (TypeError, ValueError) as exc:
+        raise RuntimeTraceError(f"invalid runtime trace field: {field}") from exc
+    if RuntimeEventType.HARNESS in parsed or len(parsed) != len(set(parsed)):
+        raise RuntimeTraceError(f"invalid runtime trace field: {field}")
+    return parsed
+
+
+def _coverage(
+    raw: object,
+    events: tuple[RuntimeEvent, ...],
+    exit_status: str,
+) -> RuntimeCoverage:
+    if not isinstance(raw, dict):
+        raise RuntimeTraceError("runtime trace coverage record is missing")
+    required = _event_types(raw.get("required_event_types"), "coverage.required_event_types")
+    observed = _event_types(raw.get("observed_event_types"), "coverage.observed_event_types")
+    missing = _event_types(raw.get("missing_event_types"), "coverage.missing_event_types")
+    require_exit_zero = _boolean(raw.get("require_exit_zero"), "coverage.require_exit_zero")
+    exit_satisfied = _boolean(
+        raw.get("exit_status_satisfied"), "coverage.exit_status_satisfied"
+    )
+    complete = _boolean(raw.get("complete"), "coverage.complete")
+    actual_observed = tuple(
+        sorted(
+            {event.event_type for event in events if event.event_type != RuntimeEventType.HARNESS},
+            key=lambda item: item.value,
+        )
+    )
+    actual_missing = tuple(item for item in required if item not in actual_observed)
+    actual_exit_satisfied = exit_status.startswith("exit-") and (
+        not require_exit_zero or exit_status == "exit-0"
+    )
+    actual_complete = not actual_missing and actual_exit_satisfied
+    if (
+        observed != actual_observed
+        or missing != actual_missing
+        or exit_satisfied != actual_exit_satisfied
+        or complete != actual_complete
+    ):
+        raise RuntimeTraceError("runtime trace coverage assertions do not match observations")
+    return RuntimeCoverage(
+        required_event_types=required,
+        observed_event_types=observed,
+        missing_event_types=missing,
+        require_exit_zero=require_exit_zero,
+        exit_status_satisfied=exit_satisfied,
+        complete=complete,
+    )
+
+
 def _timestamp(value: str, field: str) -> datetime:
     try:
         parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
@@ -199,8 +260,9 @@ def load_runtime_trace(
         raw = json.loads(payload)
     except (UnicodeDecodeError, json.JSONDecodeError) as exc:
         raise RuntimeTraceError("runtime trace is not valid JSON") from exc
-    if not isinstance(raw, dict) or raw.get("schema_version") != "1.0":
+    if not isinstance(raw, dict) or raw.get("schema_version") not in {"1.0", "1.1"}:
         raise RuntimeTraceError("unsupported runtime trace schema")
+    schema_version = raw["schema_version"]
     artifact_sha256 = _digest(raw.get("artifact_sha256"), "artifact_sha256")
     if artifact_sha256 != expected_artifact_sha256.lower():
         raise RuntimeTraceError("runtime trace artifact does not match scanned artifact")
@@ -280,6 +342,12 @@ def load_runtime_trace(
         for event in events
     ):
         raise RuntimeTraceError("runtime event timestamp falls outside the trace interval")
+    exit_status = _text(raw.get("exit_status"), "exit_status", required=True) or ""
+    coverage = (
+        _coverage(raw.get("coverage"), events, exit_status)
+        if schema_version == "1.1"
+        else None
+    )
     return RuntimeTrace(
         run_id=run_id,
         artifact_sha256=artifact_sha256,
@@ -287,12 +355,14 @@ def load_runtime_trace(
         backend=_text(raw.get("backend"), "backend", required=True) or "",
         started_at=started_at,
         finished_at=finished_at,
-        exit_status=_text(raw.get("exit_status"), "exit_status", required=True) or "",
+        exit_status=exit_status,
         isolation=isolation,
         events=events,
         trace_sha256=hashlib.sha256(payload).hexdigest(),
         signature_verified=signature_verified,
         signature_identity=signature_identity if signature_verified else None,
         base_image_verified=base_image_verified,
+        coverage=coverage,
         warnings=tuple(warnings),
+        schema_version=schema_version,
     )

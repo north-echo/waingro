@@ -96,7 +96,19 @@ def _copy_candidate(plan: dict) -> None:
             os.chown(Path(directory) / name, account.pw_uid, account.pw_gid)
 
 
-def _synthetic_home() -> dict[str, str]:
+def _synthetic_value(name: str, profile: str) -> str:
+    suffix = hashlib.sha256(f"{name}:{profile}".encode()).hexdigest()[:20].upper()
+    prefixes = {
+        "access-key": "WAINGRO_CANARY_ACCESS",
+        "api-key": "WAINGRO_CANARY_API_KEY",
+        "password": "WAINGRO_CANARY_PASSWORD",
+        "secret-key": "WAINGRO_CANARY_SECRET",
+        "token": "WAINGRO_CANARY_TOKEN",
+    }
+    return f"{prefixes[profile]}_{suffix}"
+
+
+def _synthetic_home(plan: dict) -> dict[str, str]:
     account = pwd.getpwnam("waingro")
     home = Path(account.pw_dir)
     (home / ".aws").mkdir(mode=0o700, parents=True, exist_ok=True)
@@ -119,7 +131,7 @@ def _synthetic_home() -> dict[str, str]:
             os.chown(Path(directory) / name, account.pw_uid, account.pw_gid)
         for name in files:
             os.chown(Path(directory) / name, account.pw_uid, account.pw_gid)
-    return {
+    environment = {
         "HOME": str(home),
         "PATH": "/usr/local/bin:/usr/bin:/bin",
         "AWS_ACCESS_KEY_ID": "WAINGRO_CANARY_ACCESS",
@@ -128,6 +140,25 @@ def _synthetic_home() -> dict[str, str]:
         "OPENAI_API_KEY": "WAINGRO_CANARY_OPENAI_KEY",
         "WAINGRO_DYNAMIC": "1",
     }
+    scenario = plan["execution"]["scenario"]
+    for name, profile in scenario["synthetic_environment"].items():
+        environment[name] = _synthetic_value(name, profile)
+    return environment
+
+
+def _validate_guest_contract(plan: dict) -> None:
+    scenario = plan["execution"]["scenario"]
+    missing = [
+        executable
+        for executable in scenario["required_executables"]
+        if shutil.which(
+            executable,
+            path="/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin",
+        )
+        is None
+    ]
+    if missing:
+        raise RuntimeError("base image lacks required executables: " + ", ".join(missing))
 
 
 def _argv(plan: dict) -> list[str]:
@@ -328,13 +359,26 @@ def main() -> None:
         base_sha256 = plan["execution"]["base_image_sha256"]
         network_policy = plan["execution"]["network_policy"]
         _copy_candidate(plan)
-        environment = _synthetic_home()
+        _validate_guest_contract(plan)
+        environment = _synthetic_home(plan)
         exit_status, output_sha256 = _run(plan, _argv(plan), environment)
         events = _parse_events()
     except Exception as exc:  # Guest errors must still produce a bounded receipt.
         error = f"{type(exc).__name__}: {exc}"[:1000]
+    coverage_policy = (
+        plan.get("execution", {}).get("scenario", {}).get("coverage", {})
+        if "plan" in locals()
+        else {}
+    )
+    required_types = coverage_policy.get("required_event_types", [])
+    require_exit_zero = coverage_policy.get("require_exit_zero", False)
+    observed_types = sorted({event["type"] for event in events if event["type"] != "harness"})
+    missing_types = [item for item in required_types if item not in observed_types]
+    exit_status_satisfied = exit_status.startswith("exit-") and (
+        not require_exit_zero or exit_status == "exit-0"
+    )
     trace = {
-        "schema_version": "1.0",
+        "schema_version": "1.1",
         "run_id": run_id,
         "artifact_sha256": artifact_sha256,
         "host": "hanna2",
@@ -353,6 +397,14 @@ def main() -> None:
             "candidate_read_only": True,
         },
         "events": events,
+        "coverage": {
+            "required_event_types": required_types,
+            "observed_event_types": observed_types,
+            "missing_event_types": missing_types,
+            "require_exit_zero": require_exit_zero,
+            "exit_status_satisfied": exit_status_satisfied,
+            "complete": not missing_types and exit_status_satisfied,
+        },
         "harness": {
             "error": error,
             "candidate_output_sha256": output_sha256,

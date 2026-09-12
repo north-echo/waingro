@@ -1,5 +1,6 @@
 """Tests for social engineering rules."""
 
+import waingro.rules.social as social
 from waingro.rules.social import FakeDependency, NpmLifecycleHook
 
 
@@ -45,6 +46,12 @@ def test_social_001_catches_unknown_package(make_inline_skill):
     findings = FakeDependency().evaluate(skill)
     assert len(findings) >= 1
     assert "evil-backdoor-pkg" in findings[0].remediation
+
+
+def test_social_001_equal_distance_tie_is_deterministic(monkeypatch):
+    monkeypatch.setattr(social, "KNOWN_GOOD_PACKAGES", {"scipy", "numpy"})
+
+    assert social._nearest_known("sympy") == "numpy"
 
 
 def test_social_003_npm_preinstall_hook(make_inline_skill):
