@@ -97,16 +97,19 @@ _INSTRUCTION_CAPABILITIES = (
     _HighImpactInstruction(
         "bulk destructive action",
         re.compile(
-            r"\b(?:wip(?:e|es|ed|ing)|delet(?:e|es|ed|ing)|"
-            r"remov(?:e|es|ed|ing)|clear(?:s|ed|ing)?|cancel(?:s|led|ing)?|"
-            r"refund(?:s|ed|ing)?)\b(?:[^.\n]|\.(?=[/A-Za-z0-9_~])){0,60}"
+            r"\b(?:wipe|delete|remove|clear|cancel|refund)\b"
+            r"(?:[^.\n]|\.(?=[/A-Za-z0-9_~])){0,60}"
             r"\b(?:all|entire(?:ly)?|every|without\s+exception)\b|"
             r"\b(?:all|entire(?:ly)?|every)\b\s+(?:existing\s+)?"
             r"(?:accounts?|buckets?|data|files?|messages?|orders?|positions?|"
             r"records?|resources?|sessions?|subscriptions?|users?)\b"
-            r"[^.\n]{0,35}\b(?:wip(?:e|es|ed|ing)|delet(?:e|es|ed|ing)|"
-            r"remov(?:e|es|ed|ing)|clear(?:s|ed|ing)?|cancel(?:s|led|ing)?|"
-            r"refund(?:s|ed|ing)?)\b",
+            r"[^.\n]{0,35}\b(?:wipe|delete|remove|clear|cancel|refund)\b|"
+            r"\b(?:deletes?|wipes?|clears?)\b"
+            r"(?:[^.\n]|\.(?=[/A-Za-z0-9_~])){0,45}"
+            r"\b(?:workspace|home\s+directory|filesystem|disk|drive|database|"
+            r"inbox|account)\b"
+            r"(?:[^.\n]|\.(?=[/A-Za-z0-9_~])){0,30}"
+            r"\b(?:all|entire(?:ly)?|every)\b",
             re.IGNORECASE,
         ),
         re.compile(
