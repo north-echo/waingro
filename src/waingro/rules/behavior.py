@@ -127,7 +127,8 @@ _INSTRUCTION_CAPABILITIES = (
         ),
         re.compile(
             r"\b(?:wipe|delete|remove|cleanup|reset|cancel|refund|subscription|billing|"
-            r"destructive|irreversible|dangerous|high[- ]stakes)\b",
+            r"manage(?:ment)?|administer|lifecycle|crud|destructive|irreversible|"
+            r"dangerous|high[- ]stakes)\b",
             re.IGNORECASE,
         ),
     ),
@@ -315,6 +316,16 @@ class OffPurposeHighImpactInstruction(Rule):
                 r")"
                 r"(?:\bwithout\b[^.\n]{0,60}\b(?:approval|confirmation|confirm)\b|"
                 r"\b(?:skip|bypass)\b[^.\n]{0,40}\b(?:approval|confirmation)\b)",
+                local_context,
+                re.IGNORECASE,
+            ):
+                continue
+            if capability.name == "confirmation bypass" and re.search(
+                r"\b(?:skip|bypass)\b[^.\n]{0,40}"
+                r"\b(?:approval|confirmation)\b[^.\n]{0,60}"
+                r"\b(?:action|operation|request|command)\b[^.\n]{0,20}"
+                r"\b(?:is|was|will\s+be)?\s*not\s+"
+                r"(?:executed?|performed?|run|sent|submitted?)\b",
                 local_context,
                 re.IGNORECASE,
             ):

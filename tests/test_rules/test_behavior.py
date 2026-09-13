@@ -125,6 +125,17 @@ def test_declared_cleanup_instruction_is_not_reported(tmp_path):
     assert OffPurposeHighImpactInstruction().evaluate(skill) == []
 
 
+def test_declared_management_covers_lifecycle_clear(tmp_path):
+    skill = _skill(
+        tmp_path,
+        "Pass an empty list to clear all payout addresses.",
+        "echo safe\n",
+        description="Manage an agent identity and its payout addresses.",
+    )
+
+    assert OffPurposeHighImpactInstruction().evaluate(skill) == []
+
+
 def test_protective_approval_instruction_is_not_confirmation_bypass(tmp_path):
     skill = _skill(
         tmp_path,
@@ -153,6 +164,17 @@ def test_negative_modal_without_confirmation_is_not_bypass(tmp_path):
         'No order may be executed without the user\'s explicit "CONFIRM".',
         "echo safe\n",
         description="Trade on an exchange.",
+    )
+
+    assert OffPurposeHighImpactInstruction().evaluate(skill) == []
+
+
+def test_skipped_approval_with_no_execution_is_not_bypass(tmp_path):
+    skill = _skill(
+        tmp_path,
+        "When no device is connected, skip approval; action not executed.",
+        "echo safe\n",
+        description="Relay mobile approval requests.",
     )
 
     assert OffPurposeHighImpactInstruction().evaluate(skill) == []
