@@ -1,0 +1,147 @@
+{
+  "schema_version": "1.0",
+  "reviews": [
+    {
+      "artifact_sha256": "a7a8175bb5d122c3d39a32cab7f5b9be23bc06577004726fdd7b1842e0f065cd",
+      "status": "source-corroborated",
+      "repository": "https://github.com/ClawWallet/Claw-Wallet-Skill",
+      "revision": "7300ab4f01a811690184cb70515e79a08ab58817",
+      "artifact_source_match": "partial",
+      "match_counts": {"total": 5, "matched": 4, "missing": 0, "changed": 1},
+      "evidence_urls": [
+        "https://github.com/ClawWallet/Claw-Wallet-Skill/commit/7300ab4f01a811690184cb70515e79a08ab58817"
+      ],
+      "note": "The exact queued SKILL.md exists at this revision; four of five core files match and skill.yml differs. The binary repository is separate and was not treated as skill-source identity."
+    },
+    {
+      "artifact_sha256": "0975890f5d00b0f6cf5451b8dbd11687eefbcc37c5c8672e295adcfc4bb13601",
+      "status": "source-corroborated",
+      "repository": "https://github.com/ClawWallet/Claw-Wallet-Skill",
+      "revision": "7300ab4f01a811690184cb70515e79a08ab58817",
+      "artifact_source_match": "partial",
+      "match_counts": {"total": 5, "matched": 4, "missing": 0, "changed": 1},
+      "evidence_urls": [
+        "https://github.com/ClawWallet/Claw-Wallet-Skill/commit/7300ab4f01a811690184cb70515e79a08ab58817"
+      ],
+      "note": "The exact queued SKILL.md exists at this revision; four of five core files match and skill.yml differs. This is independently bound to the wallet-test artifact and does not transfer publisher trust."
+    },
+    {
+      "artifact_sha256": "e130a2c87044383f1d3ca4121a2f1d55e86b2d7869d6972110eb98aacfe519de",
+      "status": "source-corroborated",
+      "repository": "https://github.com/verdikta/verdikta-applications",
+      "revision": "010140bbd231ba690ba93810cece56642e1245af",
+      "artifact_source_match": "full",
+      "evidence_urls": [
+        "https://github.com/verdikta/verdikta-applications/commit/010140bbd231ba690ba93810cece56642e1245af"
+      ],
+      "note": "The exact queued SKILL.md and the skill subtree are present in the claimed monorepository revision."
+    },
+    {
+      "artifact_sha256": "31611fa81e0b1dbdf4609a31dad70a2973e605b0f8ce18717409a9af929d7859",
+      "status": "source-corroborated",
+      "repository": "https://github.com/teeclaw/openclaw-social-post",
+      "revision": "827c792b81d0d57b201a59862ebff36cd8cb3aac",
+      "artifact_source_match": "full",
+      "match_counts": {"total": 13, "matched": 13, "missing": 0, "changed": 0},
+      "evidence_urls": [
+        "https://github.com/teeclaw/openclaw-social-post/commit/827c792b81d0d57b201a59862ebff36cd8cb3aac"
+      ],
+      "note": "GitHub redirects the declared teeclaw/social-post name to this repository. All 13 compared core files match the historical revision."
+    },
+    {
+      "artifact_sha256": "35468383d25a94e44e1ea9d3fe0d7cddab8ae3450528a35ae6d1ffaf97e556be",
+      "status": "source-corroborated",
+      "repository": "https://github.com/xiehaixin/kindle-download",
+      "revision": "5a86a3b17e49adc10d48c47ff27c19e34e52932c",
+      "artifact_source_match": "partial",
+      "match_counts": {"total": 9, "matched": 8, "missing": 0, "changed": 1},
+      "evidence_urls": [
+        "https://github.com/xiehaixin/kindle-download/commit/5a86a3b17e49adc10d48c47ff27c19e34e52932c"
+      ],
+      "note": "The exact queued SKILL.md and every compared script match; README.md differs from the matching historical revision."
+    },
+    {
+      "artifact_sha256": "74307e844615eb1b014c1e3310e85f8cc30d4f151242703d4ddb3dea37fbd130",
+      "status": "source-corroborated",
+      "repository": "https://github.com/marzliak/quick-backup-restore",
+      "revision": "a0650918bfda0544a11c7dc487da3c617ad106e6",
+      "artifact_source_match": "full",
+      "match_counts": {"total": 19, "matched": 19, "missing": 0, "changed": 0},
+      "evidence_urls": [
+        "https://github.com/marzliak/quick-backup-restore/commit/a0650918bfda0544a11c7dc487da3c617ad106e6"
+      ],
+      "note": "All 19 compared core files match the claimed repository revision."
+    },
+    {
+      "artifact_sha256": "e983aeaf6ab970db733ba6e3bc99352052413d9a26c5a6fc9f2c722a0ba3feff",
+      "status": "source-corroborated",
+      "repository": "https://github.com/24601/agent-deep-research",
+      "revision": "d006b56392b81383af7ad14b4793003626cbaae3",
+      "artifact_source_match": "full",
+      "match_counts": {"total": 18, "matched": 18, "missing": 0, "changed": 0},
+      "evidence_urls": [
+        "https://github.com/24601/agent-deep-research/commit/d006b56392b81383af7ad14b4793003626cbaae3"
+      ],
+      "note": "All 18 compared core files match the claimed repository revision."
+    },
+    {
+      "artifact_sha256": "fe043bf2f62c0193ff4619149b7952abdee6b208551b81c6ca38ab407f7c24c1",
+      "status": "source-unavailable",
+      "repository": "https://github.com/clawgrid/clawgrid-connector",
+      "revision": null,
+      "artifact_source_match": "unknown",
+      "evidence_urls": ["https://github.com/clawgrid/clawgrid-connector"],
+      "note": "The declared repository is 404, GitHub repository search finds no public replacement, and the named account currently exposes zero public repositories."
+    },
+    {
+      "artifact_sha256": "909e5271a4fd0c9db0ee3c968a8003b3508ad292d1503566779499c551c10647",
+      "status": "source-unavailable",
+      "repository": "https://github.com/atharva-badgujar/resume-builder",
+      "revision": null,
+      "artifact_source_match": "none",
+      "evidence_urls": [
+        "https://github.com/atharva-badgujar/resume-builder",
+        "https://github.com/atharva-badgujar/resumex-openclaw-skill"
+      ],
+      "note": "The declared repository is 404. A newer public resumex-openclaw-skill repository exists, but the queued SKILL.md, README.md, and send_pdf.py blobs do not appear in its history."
+    },
+    {
+      "artifact_sha256": "d1fc0777be482c04a9c965529c239bf61180ccd524dab2c64ffc05e1533b07d9",
+      "status": "source-partially-corroborated",
+      "repository": "https://github.com/Scottcjn/bottube",
+      "revision": "00973f5b3d2098ad42404afb0cce3945d1eead85",
+      "artifact_source_match": "partial",
+      "match_counts": {"total": 267, "matched": 85, "missing": 2, "changed": 180},
+      "evidence_urls": [
+        "https://github.com/Scottcjn/bottube/commit/00973f5b3d2098ad42404afb0cce3945d1eead85",
+        "https://github.com/OnxyDaemon/bottube-upload-bot"
+      ],
+      "note": "Eighty-five current core files match and representative queued files occur across repository history, but the queued SKILL.md is absent from that history. The second declared source is 404. This supports derivation, not an exact artifact-to-revision binding."
+    },
+    {
+      "artifact_sha256": "12bf6a5b15739a776aae641156e12905fef966ee54c6e8c55cdc2d96ad34c8c1",
+      "status": "source-corroborated",
+      "repository": "https://github.com/SemFreud/china-install-skills",
+      "revision": "73d7c2319a94d885c2804c776ee615a363dcbb37",
+      "artifact_source_match": "full",
+      "match_counts": {"total": 17, "matched": 17, "missing": 0, "changed": 0},
+      "evidence_urls": [
+        "https://github.com/SemFreud/china-install-skills/commit/73d7c2319a94d885c2804c776ee615a363dcbb37",
+        "https://github.com/5145852587/china-install-skills"
+      ],
+      "note": "The declared repository and account are 404, but the only public same-name repository preserves all 17 compared core files exactly. GitHub does not mark it as a fork, so source content is corroborated while original ownership remains unresolved."
+    },
+    {
+      "artifact_sha256": "f72f914c4df4043e48f1c7ad45f6158f179af0a6bb2d56a857bc03eb1a0bdc10",
+      "status": "source-corroborated",
+      "repository": "https://github.com/bvinci1-design/flow",
+      "revision": "4cae0650a687905436e1a710c70847a5d09be4f2",
+      "artifact_source_match": "full",
+      "match_counts": {"total": 10, "matched": 10, "missing": 0, "changed": 0},
+      "evidence_urls": [
+        "https://github.com/bvinci1-design/flow/commit/4cae0650a687905436e1a710c70847a5d09be4f2"
+      ],
+      "note": "All 10 compared core files match the claimed repository revision."
+    }
+  ]
+}

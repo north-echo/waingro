@@ -88,6 +88,25 @@ waingro mcp batch manifest.json --results results.json --cleanup
 - `--cleanup` removes repositories cloned by the current batch invocation. It
   does not remove repositories that were already present in the clone directory.
 
+### Provenance review
+
+WAINGRO can prepare an artifact-bound provenance ledger from an unauthorized
+manual-review queue without contacting a network or executing candidate code:
+
+```bash
+waingro provenance prepare queue.json --output provenance.json
+waingro provenance apply-review provenance.json reviews.json \
+  --output provenance-reviewed.json
+```
+
+`prepare` re-scans every candidate, requires its exact SHA-256 identity to
+match, checks registry identity, inventories declared source repositories and
+service hosts, and flags content-equivalent queue entries without merging their
+publishers. `apply-review` accepts separately gathered source-history evidence
+only when it is bound to a ledger artifact and a full Git revision. Neither
+command installs, imports, executes, or authorizes a candidate, and external
+source corroboration never changes an intent verdict.
+
 ## Detection Coverage
 
 ### OpenClaw Rules (47 rules)
@@ -304,6 +323,18 @@ unauthorized; no candidate was run. This is a re-score of the frozen corpus,
 not a new acquisition, and a high review priority is not a malware attribution.
 See the [high-risk refinement report](research/refinement-2026-09-12.md).
 
+A subsequent provenance-first review re-verified all 50 queued artifact
+identities. Twelve declared strong source claims were checked against public Git
+history: 9 were corroborated, 1 was partially corroborated, and 2 declared
+repositories were unavailable. No publisher was confirmed malicious. The pass
+did identify one material dangerous-by-design architecture in
+`clawgrid-connector`: a persistent agent accepts server-controlled instructions,
+can auto-allow skill execution, and can act without owner-visible output. This
+is a security finding, not a malware attribution. Dynamic execution remains
+unauthorized; the follow-up shortlist is four exact artifacts, not the entire
+high-priority cohort. See the
+[provenance and dynamic-gate report](research/provenance-review-2026-09-12.md).
+
 ## Threat-intelligence model
 
 WAINGRO treats public intelligence in deliberately different ways:
@@ -337,6 +368,9 @@ not promoted to an attack verdict.
 - [September 2026 high-risk refinement](research/refinement-2026-09-12.md)
   — evidence corrections, manual dispositions, exact rescore, and unauthorized
   review queue
+- [September 2026 provenance review](research/provenance-review-2026-09-12.md)
+  — artifact-bound source corroboration, architectural findings, and a bounded
+  unauthorized dynamic shortlist
 - [ClawHub Ecosystem Security Audit](research/clawhub-audit/) — March 2026 audit of 30,037 skills
 - MCP Ecosystem Security Scan — March 2026 scan of 1,139 MCP servers (paper forthcoming)
 

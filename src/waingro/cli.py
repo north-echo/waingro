@@ -16,6 +16,11 @@ from waingro.dynamic.trace import load_runtime_trace
 from waingro.ecosystem import load_ecosystem_context
 from waingro.evaluation import PREDICATES, evaluate_dataset
 from waingro.models import Severity
+from waingro.provenance_review import (
+    ProvenancePreparationError,
+    apply_external_reviews,
+    prepare_provenance_ledger,
+)
 from waingro.reporters.console import print_audit_results, print_result
 from waingro.reporters.json_report import format_audit_json, format_json, result_to_dict
 from waingro.resolvers.dependency_graph import resolve_dependency_graph
@@ -52,6 +57,45 @@ def _severity_at_or_above(severity: Severity, threshold: Severity) -> bool:
 @click.version_option(__version__, prog_name="waingro")
 def main() -> None:
     """WAINGRO: AI Agent Skill Security Scanner."""
+
+
+@main.group()
+def provenance() -> None:
+    """Prepare non-executing, artifact-bound provenance review."""
+
+
+@provenance.command("prepare")
+@click.argument(
+    "queue",
+    type=click.Path(exists=True, dir_okay=False, path_type=Path),
+)
+@click.option("-o", "--output", required=True, type=click.Path(path_type=Path))
+def provenance_prepare(queue: Path, output: Path) -> None:
+    """Verify a review queue and extract offline source and registry evidence."""
+    try:
+        report = prepare_provenance_ledger(queue, output)
+    except (OSError, ProvenancePreparationError, ValueError) as exc:
+        raise click.ClickException(str(exc)) from exc
+    click.echo(json.dumps(report["counts"], indent=2))
+
+
+@provenance.command("apply-review")
+@click.argument(
+    "ledger",
+    type=click.Path(exists=True, dir_okay=False, path_type=Path),
+)
+@click.argument(
+    "reviews",
+    type=click.Path(exists=True, dir_okay=False, path_type=Path),
+)
+@click.option("-o", "--output", required=True, type=click.Path(path_type=Path))
+def provenance_apply_review(ledger: Path, reviews: Path, output: Path) -> None:
+    """Apply manual source checks bound to exact artifact identities."""
+    try:
+        report = apply_external_reviews(ledger, reviews, output)
+    except (OSError, ProvenancePreparationError, ValueError) as exc:
+        raise click.ClickException(str(exc)) from exc
+    click.echo(json.dumps(report["external_reviews"]["counts"], indent=2))
 
 
 @main.command()
@@ -98,9 +142,7 @@ def scan(
 
     if expect_sha256 is not None:
         expected = expect_sha256.lower()
-        invalid_character = any(
-            character not in "0123456789abcdef" for character in expected
-        )
+        invalid_character = any(character not in "0123456789abcdef" for character in expected)
         if len(expected) != 64 or invalid_character:
             raise click.BadParameter(
                 "must be exactly 64 hexadecimal characters",
@@ -266,12 +308,14 @@ def benchmark(
                 f"({values['recall']:.1%})"
             )
         ranking = data["ranking"]
-        lines.extend((
-            "",
-            "Intent-neutral review ranking:",
-            f"  Average precision: {ranking['average_precision']:.1%}",
-            f"  Recall at positive-count cutoff: {ranking['recall_at_positive_count']:.1%}",
-        ))
+        lines.extend(
+            (
+                "",
+                "Intent-neutral review ranking:",
+                f"  Average precision: {ranking['average_precision']:.1%}",
+                f"  Recall at positive-count cutoff: {ranking['recall_at_positive_count']:.1%}",
+            )
+        )
         rendered = "\n".join(lines)
 
     if output:
@@ -286,17 +330,14 @@ def benchmark(
             f"precision {selected.precision:.4f} is below {fail_under_precision:.4f}"
         )
     if fail_under_recall is not None and selected.recall < fail_under_recall:
-        raise click.ClickException(
-            f"recall {selected.recall:.4f} is below {fail_under_recall:.4f}"
-        )
+        raise click.ClickException(f"recall {selected.recall:.4f} is below {fail_under_recall:.4f}")
     average_precision = data["ranking"]["average_precision"]
     if (
         fail_under_average_precision is not None
         and average_precision < fail_under_average_precision
     ):
         raise click.ClickException(
-            f"average precision {average_precision:.4f} is below "
-            f"{fail_under_average_precision:.4f}"
+            f"average precision {average_precision:.4f} is below {fail_under_average_precision:.4f}"
         )
 
 
@@ -379,9 +420,7 @@ def resolve_packages(
         result = scan_skill(path)
         client = RegistryMetadataClient(timeout=timeout, max_bytes=max_metadata_bytes)
         verifier = (
-            SigstoreProvenanceVerifier(offline=offline_trust_root)
-            if verify_provenance
-            else None
+            SigstoreProvenanceVerifier(offline=offline_trust_root) if verify_provenance else None
         )
         resolutions = resolve_package_references(
             result.package_references,
@@ -411,18 +450,14 @@ def resolve_packages(
             *(dependency_graph.resolutions if dependency_graph else []),
         ]
         vulnerabilities = (
-            query_vulnerabilities(all_resolutions, OsvClient(timeout=timeout))
-            if osv
-            else []
+            query_vulnerabilities(all_resolutions, OsvClient(timeout=timeout)) if osv else []
         )
     except (OSError, ValueError) as exc:
         raise click.ClickException(str(exc)) from exc
     report = result_to_dict(result)
     report["package_resolutions"] = [resolution.to_dict() for resolution in resolutions]
     report["package_artifacts"] = [inspection.to_dict() for inspection in inspections]
-    report["dependency_graph"] = (
-        dependency_graph.to_dict() if dependency_graph else None
-    )
+    report["dependency_graph"] = dependency_graph.to_dict() if dependency_graph else None
     report["package_vulnerabilities"] = [item.to_dict() for item in vulnerabilities]
     rendered = json.dumps(report, indent=2)
     if output:
@@ -843,9 +878,7 @@ def dynamic_validate_trace(
     if bool(signature) != bool(allowed_signers):
         raise click.UsageError("--signature and --allowed-signers must be supplied together")
     if signature and not base_image_sha256:
-        raise click.UsageError(
-            "--base-image-sha256 is required for authenticated runtime evidence"
-        )
+        raise click.UsageError("--base-image-sha256 is required for authenticated runtime evidence")
     try:
         result = scan_skill(path)
         if result.artifact_identity is None:
