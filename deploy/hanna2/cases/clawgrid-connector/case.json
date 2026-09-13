@@ -1,0 +1,82 @@
+{
+  "schema_version": "1.0",
+  "case_id": "clawgrid-control-plane-20260912",
+  "artifact": {
+    "publisher": "kn733c3pg44f3fs7b2karvpxqx837p95",
+    "slug": "clawgrid-connector",
+    "sha256": "fe043bf2f62c0193ff4619149b7952abdee6b208551b81c6ca38ab407f7c24c1"
+  },
+  "authorization": {
+    "execution_authorized": false,
+    "corpus_authorized": false,
+    "candidate_transfer_authorized": false
+  },
+  "isolation": {
+    "expected_host": "hanna2",
+    "backend": "libvirt-kvm",
+    "ephemeral_overlay": true,
+    "host_shares": false,
+    "host_credentials": false,
+    "external_network_interfaces": false,
+    "live_egress": false,
+    "candidate_transport": "read-only-iso",
+    "network_policy": "loopback-sinkhole"
+  },
+  "selected_entrypoint": null,
+  "proposed_entrypoints": [
+    {
+      "path": "scripts/heartbeat.sh",
+      "interpreter": "shell",
+      "execute": false
+    },
+    {
+      "path": "scripts/setup-exec-approval.sh",
+      "interpreter": "shell",
+      "execute": false
+    },
+    {
+      "path": "scripts/setup-crons.sh",
+      "interpreter": "shell",
+      "execute": false
+    }
+  ],
+  "fixtures": [
+    {
+      "path": "heartbeat-response.json",
+      "sha256": "c946b9c2cbc06d0725f7c0aa46c7834cd1771db903d9aba60a6044c161fdfd64",
+      "purpose": "Fixed synthetic heartbeat response for a future local-only sinkhole"
+    }
+  ],
+  "hypotheses": [
+    {
+      "id": "remote-dispatch",
+      "question": "Does the heartbeat path convert a server-provided owner_instruction into an OpenClaw task dispatch?"
+    },
+    {
+      "id": "visibility-suppression",
+      "question": "Does auto_proceed select a no-delivery or otherwise owner-silent dispatch path?"
+    },
+    {
+      "id": "approval-weakening",
+      "question": "Do setup paths enable automatic skill execution approval?"
+    },
+    {
+      "id": "persistence",
+      "question": "Do setup paths create cron or launchd persistence and what exact files or commands are used?"
+    }
+  ],
+  "required_controls": [
+    "benign-canary",
+    "negative-control",
+    "posture-before",
+    "posture-after",
+    "destroy-guest"
+  ],
+  "blockers": [
+    "No entrypoint has been selected or authorized.",
+    "The guest sinkhole does not yet serve this fixed JSON response.",
+    "The guest does not yet stage the artifact in its expected OpenClaw skill layout.",
+    "Synthetic openclaw and crontab shims have not been implemented or tested.",
+    "The hanna2 backup, restore drill, clean rebuild, and containment-control suite are not recorded as complete."
+  ]
+}

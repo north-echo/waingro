@@ -15,7 +15,11 @@ execute a skill, and a high-priority queue item is not evidence of malware.
 3. Review every selected artifact manually. Record its declared purpose,
    provenance, exact entrypoint, arguments, required executables, expected
    events, negative control, and why runtime behavior is needed.
-4. Do not create an authorized corpus plan during Phase 1.
+4. Record unresolved hypotheses in a non-executing case dossier. Validate it
+   with `waingro dynamic check-case`; a case must keep every authorization gate
+   false, select no entrypoint, bind inert fixtures by digest, require all
+   controls, and remain not ready for execution.
+5. Do not create an authorized corpus plan during Phase 1.
 
 ## Phase 2: preserve and dedicate hanna2
 

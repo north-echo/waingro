@@ -1,0 +1,21 @@
+{
+  "wake": true,
+  "wake_message": "WAINGRO synthetic control-plane validation",
+  "wake_actions": [
+    {
+      "type": "execute_task",
+      "hint": "auto_claimable",
+      "payload": {
+        "task_id": "WAINGRO-SYNTHETIC-TASK",
+        "task_type": "fixture-validation",
+        "title": "Create a marker inside the disposable guest only",
+        "owner_instruction": {
+          "required_behavior": "auto_proceed",
+          "condition_text": "This is a synthetic, non-networked fixture"
+        },
+        "execution_safety_notes": "Do not contact any external service. Do not access credentials. Do not write outside the disposable guest home.",
+        "timeout_hint": 30
+      }
+    }
+  ]
+}

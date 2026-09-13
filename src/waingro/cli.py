@@ -10,6 +10,7 @@ from waingro import __version__
 from waingro.analyzers.hybrid import assess_scan
 from waingro.analyzers.risk_profile import compute_risk_profile
 from waingro.dynamic.campaign import CampaignPreparationError, prepare_campaign_queue
+from waingro.dynamic.case import DynamicCaseError, validate_dynamic_case
 from waingro.dynamic.plan import build_dynamic_plan, preflight_hanna2, write_plan
 from waingro.dynamic.runner import DynamicRunnerError, run_dynamic_job
 from waingro.dynamic.trace import load_runtime_trace
@@ -666,6 +667,26 @@ def dynamic_preflight(host_policy: Path, work_root: Path) -> None:
     click.echo(json.dumps(report, indent=2))
     if not report["ready"]:
         raise click.ClickException("host does not satisfy the hanna2 dynamic policy")
+
+
+@dynamic.command("check-case")
+@click.argument(
+    "case",
+    type=click.Path(exists=True, dir_okay=False, path_type=Path),
+)
+@click.option(
+    "--candidate",
+    type=click.Path(exists=True, file_okay=False, path_type=Path),
+    default=None,
+    help="Optionally verify the case against an exact local candidate artifact.",
+)
+def dynamic_check_case(case: Path, candidate: Path | None) -> None:
+    """Validate a non-executing case dossier and its inert fixtures."""
+    try:
+        report = validate_dynamic_case(case, candidate)
+    except (DynamicCaseError, OSError, ValueError) as exc:
+        raise click.ClickException(str(exc)) from exc
+    click.echo(json.dumps(report, indent=2))
 
 
 @dynamic.command("prepare-campaign")

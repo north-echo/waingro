@@ -107,12 +107,30 @@ only when it is bound to a ledger artifact and a full Git revision. Neither
 command installs, imports, executes, or authorizes a candidate, and external
 source corroboration never changes an intent verdict.
 
+### Dynamic case safety
+
+A pre-execution case dossier can be verified without creating a runnable plan,
+transferring a candidate, or starting a VM:
+
+```bash
+waingro dynamic check-case deploy/hanna2/cases/clawgrid-connector/case.json
+waingro dynamic check-case deploy/hanna2/cases/clawgrid-connector/case.json \
+  --candidate /path/to/exact/clawgrid-connector
+```
+
+The optional candidate check is static and artifact-bound. A valid case must
+keep its execution, corpus, and transfer authorization gates false; omit a
+selected entrypoint; pin every inert JSON fixture; require containment controls;
+and retain at least one unresolved blocker. Case validation always reports
+`ready_for_execution: false`.
+
 ## Detection Coverage
 
-### OpenClaw Rules (47 rules)
+### OpenClaw Rules (48 rules)
 
 | Rule ID | Category | Severity | Description | Reference |
 |---------|----------|----------|-------------|-----------|
+| AGENT-001 | Agent control | HIGH | Remote service granted priority, silent execution authority, and owner-output suppression | OWASP ASI04 |
 | EXEC-001 | Execution | CRITICAL | curl/wget piped to shell | ClawHavoc |
 | EXEC-002 | Execution | CRITICAL | Base64-encoded command execution | ClawHavoc |
 | EXEC-003 | Execution | HIGH | eval/exec with dynamic content | — |
@@ -335,6 +353,13 @@ unauthorized; the follow-up shortlist is four exact artifacts, not the entire
 high-priority cohort. See the
 [provenance and dynamic-gate report](research/provenance-review-2026-09-12.md).
 
+WAINGRO 0.10.0 generalizes that finding as `AGENT-001`. The rule requires four
+facets within a bounded instruction span: remote instruction input, an authority
+override, autonomous execution, and suppression of owner-visible output.
+Persistence and automatic approval raise confidence but cannot produce a
+malicious attribution. See the
+[control-plane detection report](research/control-plane-detection-2026-09-12.md).
+
 ## Threat-intelligence model
 
 WAINGRO treats public intelligence in deliberately different ways:
@@ -371,6 +396,8 @@ not promoted to an attack verdict.
 - [September 2026 provenance review](research/provenance-review-2026-09-12.md)
   — artifact-bound source corroboration, architectural findings, and a bounded
   unauthorized dynamic shortlist
+- [September 2026 control-plane detection](research/control-plane-detection-2026-09-12.md)
+  — generalized remote-authority detection and the fail-closed ClawGrid case
 - [ClawHub Ecosystem Security Audit](research/clawhub-audit/) — March 2026 audit of 30,037 skills
 - MCP Ecosystem Security Scan — March 2026 scan of 1,139 MCP servers (paper forthcoming)
 

@@ -14,7 +14,7 @@ def test_version_command():
     runner = CliRunner()
     result = runner.invoke(main, ["version"])
     assert result.exit_code == 0
-    assert "0.9.2" in result.output
+    assert "0.10.0" in result.output
 
 
 def test_scan_clean_console():

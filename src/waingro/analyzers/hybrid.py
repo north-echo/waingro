@@ -136,7 +136,7 @@ def _static_evidence(result: ScanResult) -> tuple[list[EvidenceItem], dict[int, 
         # inert documentation. They remain less directly reachable than a
         # bundled executable file.
         reachability = 0.45 if manifest_only else 0.8
-        if finding.rule_id.startswith("BEHAV-"):
+        if finding.rule_id.startswith(("AGENT-", "BEHAV-")):
             reachability = max(reachability, 0.85)
         item = EvidenceItem(
             evidence_id=f"static:{finding.rule_id}:{index}",

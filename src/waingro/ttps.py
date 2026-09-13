@@ -20,6 +20,7 @@ _CATEGORY_TECHNIQUES = {
 }
 
 _RULE_TECHNIQUES = {
+    "AGENT-001": ("T1071", "T1059"),
     "EXEC-001": ("T1105", "T1059"),
     "EXEC-002": ("T1027", "T1059"),
     "EXFIL-001": ("T1552.001",),

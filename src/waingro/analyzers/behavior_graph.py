@@ -23,6 +23,7 @@ _CATEGORY_STAGE = {
 }
 
 _RULE_STAGE = {
+    "AGENT-001": "command-and-control",
     "BEHAV-001": "behavioral-mismatch",
     "BEHAV-002": "behavioral-mismatch",
     "EXFIL-001": "credential-reference",
@@ -44,6 +45,7 @@ _RULE_STAGE = {
 }
 
 _COMPOSITE_RULE_PATHS = {
+    "AGENT-001": ("command-and-control", "execution"),
     "BEHAV-003": ("data-access", "exfiltration"),
     "BEHAV-004": ("supply-chain", "execution"),
     "EXEC-002": ("evasion", "execution"),

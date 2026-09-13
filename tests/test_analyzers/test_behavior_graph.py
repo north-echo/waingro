@@ -66,6 +66,16 @@ def test_composite_flow_rule_forms_a_path_without_unrelated_companion_finding():
     assert len(paths[0].evidence_ids) == 1
 
 
+def test_remote_agent_authority_forms_command_and_control_execution_path():
+    finding = _finding("AGENT-001", FindingCategory.SCOPE_ESCALATION, 10)
+
+    paths = build_static_attack_paths([finding], _evidence([finding]))
+
+    assert len(paths) == 1
+    assert paths[0].stages == ("command-and-control", "execution")
+    assert len(paths[0].evidence_ids) == 1
+
+
 def test_paired_path_requires_source_before_sink():
     findings = [
         _finding("NET-006", FindingCategory.NETWORK, 10),
