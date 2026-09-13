@@ -1,0 +1,6 @@
+{
+  "api_key": "WAINGRO_CANARY_CLAWGRID_API_KEY",
+  "api_base": "https://clawgrid.ai",
+  "heartbeat_interval_minutes": 60,
+  "notifier_cron_expression": "24h"
+}

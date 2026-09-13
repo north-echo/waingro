@@ -1,0 +1,128 @@
+{
+  "schema_version": "1.0",
+  "suite_id": "hanna2-containment-controls-20260912",
+  "authorization": {
+    "execution_authorized": false,
+    "transfer_authorized": false
+  },
+  "expected_host": "hanna2",
+  "controls": [
+    {
+      "id": "posture-before",
+      "stage": "host-preflight",
+      "fixture": null,
+      "fixture_sha256": null,
+      "expected": "posture-match",
+      "execution_authorized": false
+    },
+    {
+      "id": "benign-canary",
+      "stage": "guest",
+      "fixture": "control-fixtures/benign-canary",
+      "fixture_sha256": "e1b66e276a23ceaac4294af4b957af5ce309252f0338fa4977857079add718ad",
+      "expected": "exit-0",
+      "execution_authorized": false
+    },
+    {
+      "id": "negative-control",
+      "stage": "guest",
+      "fixture": "control-fixtures/negative-control",
+      "fixture_sha256": "72f6dd57f1dda17feed67a60ed1681248fde5a78b6e257c4534750c21cc2b89e",
+      "expected": "exit-0",
+      "execution_authorized": false
+    },
+    {
+      "id": "network-sinkhole",
+      "stage": "guest",
+      "fixture": "control-fixtures/network-sinkhole",
+      "fixture_sha256": "46cf17bae488796bce25729f1c08356d2e449da219ff9ed68f5fea1633dad6aa",
+      "expected": "exit-0",
+      "execution_authorized": false
+    },
+    {
+      "id": "shim-interception",
+      "stage": "guest",
+      "fixture": "control-fixtures/shim-interception",
+      "fixture_sha256": "1a8cd36967d78919ab6146d98e2e909724678cad21aa95f9019e2a116698192e",
+      "expected": "exit-0",
+      "execution_authorized": false
+    },
+    {
+      "id": "timeout",
+      "stage": "guest",
+      "fixture": "control-fixtures/timeout",
+      "fixture_sha256": "1e937b0328d714cb3c079c3bed3cca99b49d947217df956314c1f25c8f7ae965",
+      "expected": "timeout",
+      "execution_authorized": false
+    },
+    {
+      "id": "output-volume",
+      "stage": "guest",
+      "fixture": "control-fixtures/output-volume",
+      "fixture_sha256": "630ef04469cdfb8badd85f7fbb29aa9920306bcb1aea04a241e37cc197e9f36f",
+      "expected": "resource-limit",
+      "execution_authorized": false
+    },
+    {
+      "id": "resource-policy",
+      "stage": "runner-rejection",
+      "fixture": null,
+      "fixture_sha256": null,
+      "expected": "policy-rejection",
+      "execution_authorized": false
+    },
+    {
+      "id": "missing-executable",
+      "stage": "runner-rejection",
+      "fixture": null,
+      "fixture_sha256": null,
+      "expected": "policy-rejection",
+      "execution_authorized": false
+    },
+    {
+      "id": "tampered-plan",
+      "stage": "runner-rejection",
+      "fixture": null,
+      "fixture_sha256": null,
+      "expected": "policy-rejection",
+      "execution_authorized": false
+    },
+    {
+      "id": "tampered-image",
+      "stage": "runner-rejection",
+      "fixture": null,
+      "fixture_sha256": null,
+      "expected": "policy-rejection",
+      "execution_authorized": false
+    },
+    {
+      "id": "trace-trust-rejection",
+      "stage": "runner-rejection",
+      "fixture": null,
+      "fixture_sha256": null,
+      "expected": "trusted-trace-rejection",
+      "execution_authorized": false
+    },
+    {
+      "id": "posture-after",
+      "stage": "host-postflight",
+      "fixture": null,
+      "fixture_sha256": null,
+      "expected": "posture-match",
+      "execution_authorized": false
+    },
+    {
+      "id": "destroy-guest",
+      "stage": "host-postflight",
+      "fixture": null,
+      "fixture_sha256": null,
+      "expected": "cleanup-complete",
+      "execution_authorized": false
+    }
+  ],
+  "blockers": [
+    "The suite has not been transferred to or executed on a rebuilt hanna2 host.",
+    "Offline backup media and a successful spare-disk restore drill have not been recorded.",
+    "The hanna2 base image and host policy have not been frozen and digest-pinned for this suite."
+  ]
+}

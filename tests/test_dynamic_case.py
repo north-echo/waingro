@@ -55,6 +55,19 @@ def _case(tmp_path, artifact_sha256):
                 "purpose": "Synthetic test response",
             }
         ],
+        "containment_profile": {
+            "openclaw_skill_slug": "test-skill",
+            "inert_command_shims": ["openclaw", "crontab"],
+            "sinkhole_http_response": {
+                "host": "fixture.invalid",
+                "method": "POST",
+                "path": "/api/test",
+                "fixture": "response.json",
+            },
+            "synthetic_json_files": [
+                {"home_path": ".fixture/config.json", "fixture": "response.json"}
+            ],
+        },
         "hypotheses": [{"id": "test-hypothesis", "question": "What happens?"}],
         "required_controls": [
             "benign-canary",
@@ -80,6 +93,8 @@ def test_packaged_clawgrid_case_is_valid_and_not_runnable():
     assert report["ready_for_execution"] is False
     assert report["artifact_matches_candidate"] is None
     assert report["fixtures_verified"][0]["size_bytes"] == 704
+    assert report["fixtures_verified"][1]["size_bytes"] == 161
+    assert report["containment_profile"]["inert_command_shims"] == ["openclaw", "crontab"]
 
 
 def test_case_can_be_bound_to_an_exact_candidate_without_execution(tmp_path):
@@ -121,6 +136,48 @@ def test_case_rejects_selected_entrypoint(tmp_path):
     path.write_text(json.dumps(raw), encoding="utf-8")
 
     with pytest.raises(DynamicCaseError, match="must not select"):
+        validate_dynamic_case(path)
+
+
+@pytest.mark.parametrize(
+    ("mutation", "message"),
+    [
+        (
+            lambda raw: raw["containment_profile"]["inert_command_shims"].append("curl"),
+            "shim set",
+        ),
+        (
+            lambda raw: raw["containment_profile"]["sinkhole_http_response"].update(
+                {"fixture": "missing.json"}
+            ),
+            "sinkhole response profile",
+        ),
+        (
+            lambda raw: raw["containment_profile"]["sinkhole_http_response"].update(
+                {"method": "post"}
+            ),
+            "sinkhole response profile",
+        ),
+        (
+            lambda raw: raw["containment_profile"]["synthetic_json_files"][0].update(
+                {"home_path": ".ssh/config.json"}
+            ),
+            "home path",
+        ),
+        (
+            lambda raw: raw["containment_profile"]["synthetic_json_files"][0].update(
+                {"fixture": "missing.json"}
+            ),
+            "synthetic JSON profile",
+        ),
+    ],
+)
+def test_case_rejects_unsafe_containment_profile(tmp_path, mutation, message):
+    path, raw = _case(tmp_path, "a" * 64)
+    mutation(raw)
+    path.write_text(json.dumps(raw), encoding="utf-8")
+
+    with pytest.raises(DynamicCaseError, match=message):
         validate_dynamic_case(path)
 
 

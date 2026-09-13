@@ -14,7 +14,7 @@ def test_version_command():
     runner = CliRunner()
     result = runner.invoke(main, ["version"])
     assert result.exit_code == 0
-    assert "0.10.0" in result.output
+    assert "0.11.0" in result.output
 
 
 def test_scan_clean_console():
@@ -220,6 +220,58 @@ def test_dynamic_plan_command_records_scenario_contract(tmp_path):
     assert scenario["required_executables"] == ["curl", "python3"]
     assert scenario["synthetic_environment"] == {"SERVICE_TOKEN": "token"}
     assert scenario["coverage"]["required_event_types"] == ["process"]
+
+
+def test_dynamic_plan_command_embeds_a_digest_bound_containment_profile(tmp_path):
+    output = tmp_path / "plan.json"
+    response = tmp_path / "response.json"
+    configuration = tmp_path / "configuration.json"
+    response.write_text('{"status":"synthetic"}\n', encoding="utf-8")
+    configuration.write_text('{"api_key":"WAINGRO_CANARY"}\n', encoding="utf-8")
+
+    result = CliRunner().invoke(
+        main,
+        [
+            "dynamic",
+            "plan",
+            str(FIXTURES_DIR / "dynamic" / "benign-runtime"),
+            "--base-image",
+            "waingro-base.qcow2",
+            "--base-image-sha256",
+            "a" * 64,
+            "--host-policy-sha256",
+            "d" * 64,
+            "--interpreter",
+            "python",
+            "--entrypoint",
+            "scripts/run.py",
+            "--network-policy",
+            "loopback-sinkhole",
+            "--openclaw-skill-slug",
+            "benign-runtime",
+            "--inert-shim",
+            "openclaw",
+            "--sinkhole-host",
+            "fixture.invalid",
+            "--sinkhole-method",
+            "POST",
+            "--sinkhole-path",
+            "/control",
+            "--sinkhole-json",
+            str(response),
+            "--synthetic-json",
+            f".fixture/config.json={configuration}",
+            "--output",
+            str(output),
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    containment = json.loads(output.read_text(encoding="utf-8"))["execution"]["containment"]
+    assert containment["openclaw_skill_slug"] == "benign-runtime"
+    assert containment["inert_command_shims"] == ["openclaw"]
+    assert containment["sinkhole_http_response"]["host"] == "fixture.invalid"
+    assert containment["synthetic_json_files"][0]["home_path"] == ".fixture/config.json"
 
 
 def test_scan_fail_on_critical():

@@ -45,8 +45,32 @@
       "path": "heartbeat-response.json",
       "sha256": "c946b9c2cbc06d0725f7c0aa46c7834cd1771db903d9aba60a6044c161fdfd64",
       "purpose": "Fixed synthetic heartbeat response for a future local-only sinkhole"
+    },
+    {
+      "path": "synthetic-config.json",
+      "sha256": "a3fe0c6cbe1c2b9afc3ca85f59501b3489cb85e2fe0f048f7aaf63211d03db1b",
+      "purpose": "Read-only guest configuration containing only a synthetic API credential"
     }
   ],
+  "containment_profile": {
+    "openclaw_skill_slug": "clawgrid-connector",
+    "inert_command_shims": [
+      "openclaw",
+      "crontab"
+    ],
+    "sinkhole_http_response": {
+      "host": "clawgrid.ai",
+      "method": "POST",
+      "path": "/api/lobster/heartbeat",
+      "fixture": "heartbeat-response.json"
+    },
+    "synthetic_json_files": [
+      {
+        "home_path": ".clawgrid/config.json",
+        "fixture": "synthetic-config.json"
+      }
+    ]
+  },
   "hypotheses": [
     {
       "id": "remote-dispatch",
@@ -74,9 +98,8 @@
   ],
   "blockers": [
     "No entrypoint has been selected or authorized.",
-    "The guest sinkhole does not yet serve this fixed JSON response.",
-    "The guest does not yet stage the artifact in its expected OpenClaw skill layout.",
-    "Synthetic openclaw and crontab shims have not been implemented or tested.",
+    "The containment profile has not passed the complete benign control suite on hanna2.",
+    "The base image has not proven that real openclaw and crontab executables are absent before shims are installed.",
     "The hanna2 backup, restore drill, clean rebuild, and containment-control suite are not recorded as complete."
   ]
 }

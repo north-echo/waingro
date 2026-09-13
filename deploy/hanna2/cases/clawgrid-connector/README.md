@@ -20,14 +20,26 @@ waingro dynamic check-case deploy/hanna2/cases/clawgrid-connector/case.json \
 
 The fixed heartbeat response contains only synthetic identifiers and directs
 any future action to the disposable guest home. It must not be exposed through
-a host or external interface. Before an execution plan can be considered, the
-guest harness still needs a fixed-response loopback profile, a read-only staged
-OpenClaw skill layout, and inert `openclaw` and `crontab` shims that record argv
-without scheduling or invoking an agent.
+a host or external interface. The case also pins a synthetic `.clawgrid`
+configuration containing no real credential.
+
+The generic guest harness now supports the required fixed-response profile,
+read-only OpenClaw skill layout, read-only synthetic JSON, and inert `openclaw`
+and `crontab` interception. The sinkhole response is bound to the exact HTTPS
+host, SNI name, `POST` method, path, content digest, and size. The guest first
+proves that no real executable exists for either shim name. None of these
+components has yet been validated on hanna2.
+
+Validate the complete, non-authorizing benign control catalog locally:
+
+```bash
+waingro dynamic check-controls deploy/hanna2/control-suite.json
+```
 
 After those pieces are independently tested with benign fixtures, a separate
 review must select exactly one entrypoint and decide whether to open the host
 policy, corpus, transfer, and execution gates. This repository does not make
-that decision automatically.
+that decision automatically. No ClawGrid candidate has been transferred or
+executed by this work.
 
 Assisted by Claude Code

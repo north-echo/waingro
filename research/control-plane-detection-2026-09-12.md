@@ -107,15 +107,18 @@ It is deliberately incapable of authorizing a run:
 Evidence identities:
 
 - Case SHA-256:
-  `70f7575c1912a25ecbc91291eaec41b62646b0b905a78c99eee8ec8ffd4dcaa2`
+  `26bf61ca0d215683f544358d32742cfda51de59d081ef15112262381a4783bea`
 - Synthetic heartbeat fixture SHA-256:
   `c946b9c2cbc06d0725f7c0aa46c7834cd1771db903d9aba60a6044c161fdfd64`
+- Synthetic configuration fixture SHA-256:
+  `a3fe0c6cbe1c2b9afc3ca85f59501b3489cb85e2fe0f048f7aaf63211d03db1b`
 
-The dossier remains blocked because the loopback sinkhole does not yet serve a
-fixed response, the disposable guest does not stage the expected OpenClaw
-layout, inert `openclaw` and `crontab` recording shims have not been implemented
-and tested, and the backup, restore, rebuild, and containment-control sequence
-for Hanna2 has not been recorded complete.
+The generic loopback response, OpenClaw layout, synthetic JSON, and inert shim
+components were subsequently implemented and locally unit-tested in WAINGRO
+0.11.0. The dossier remains blocked because the benign suite has not run on
+hanna2, the base image has not proved that real shim targets are absent, and the
+backup, restore, rebuild, and containment-control sequence has not been
+recorded complete.
 
 ## Interpretation and next gate
 
@@ -125,10 +128,10 @@ capture as a whole. It is not proof that the remote service ever returned a
 harmful task. Static text establishes the client-side authority path but cannot
 observe server behavior, conditional activation, or operator intent.
 
-The next safe engineering step is to implement and independently test generic
-fixed-response sinkhole support, read-only guest staging, and inert command
-recording shims using benign fixtures only. Any proposal to transfer or execute
-the corpus artifact still requires a separate review and explicit authorization
-after the Hanna2 restoration and containment evidence is complete.
+The next safe step is to preserve and rebuild hanna2, freeze the base image and
+host policy, then run the independently digest-pinned benign controls. Any
+proposal to transfer or execute the corpus artifact still requires a separate
+review and explicit authorization after that restoration and containment
+evidence is complete.
 
 Assisted by Claude Code

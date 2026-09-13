@@ -19,7 +19,10 @@ execute a skill, and a high-priority queue item is not evidence of malware.
    with `waingro dynamic check-case`; a case must keep every authorization gate
    false, select no entrypoint, bind inert fixtures by digest, require all
    controls, and remain not ready for execution.
-5. Do not create an authorized corpus plan during Phase 1.
+5. Validate the digest-pinned benign catalog with `waingro dynamic
+   check-controls deploy/hanna2/control-suite.json`. Catalog validation reads
+   fixtures but does not create plans, transfer content, or execute anything.
+6. Do not create an authorized corpus plan during Phase 1.
 
 ## Phase 2: preserve and dedicate hanna2
 
@@ -49,12 +52,27 @@ execute a skill, and a high-priority queue item is not evidence of malware.
    missing-executable, tampered-plan, tampered-image, and post-run posture
    controls.
 3. Confirm every guest has no network interface other than loopback. The
-   loopback sinkhole provides local DNS plus bounded HTTP and TLS-accept
-   telemetry, but no guest NIC and no route.
+   loopback sinkhole provides local DNS plus bounded HTTP and HTTPS telemetry,
+   but no guest NIC and no route. A fixed response is served only for its
+   digest-bound host, TLS SNI name, method, and path; all other routes return a
+   fixed 404 response.
 4. Confirm transient domains, overlays, ISO files, console logs, and candidate
    copies disappear after every control.
 5. Confirm unsigned, incomplete, policy-unbound, or isolation-invalid traces
    cannot become trusted evidence.
+6. For layout-sensitive fixtures, confirm the artifact appears only through a
+   root-owned, read-only OpenClaw path. Confirm synthetic JSON is digest-bound,
+   readable by the unprivileged guest user, and bind-mounted read-only.
+7. For inert command controls, first confirm the base guest contains no real
+   executable with the planned name. Only then install the root-owned no-op
+   shim. An intercepted `openclaw cron` or `crontab` invocation must produce
+   telemetry and no scheduling or agent side effect.
+
+The packaged control catalog remains explicitly unauthorized. Each guest
+fixture needs its own separately reviewed fixture plan, exact entrypoint,
+coverage requirements, pinned base-image and host-policy digests, and explicit
+job confirmation before Phase 3 execution. Do not reuse those fixture gates for
+a corpus artifact.
 
 ## Phase 4: separately authorized corpus campaign
 

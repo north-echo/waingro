@@ -116,6 +116,7 @@ transferring a candidate, or starting a VM:
 waingro dynamic check-case deploy/hanna2/cases/clawgrid-connector/case.json
 waingro dynamic check-case deploy/hanna2/cases/clawgrid-connector/case.json \
   --candidate /path/to/exact/clawgrid-connector
+waingro dynamic check-controls deploy/hanna2/control-suite.json
 ```
 
 The optional candidate check is static and artifact-bound. A valid case must
@@ -123,6 +124,23 @@ keep its execution, corpus, and transfer authorization gates false; omit a
 selected entrypoint; pin every inert JSON fixture; require containment controls;
 and retain at least one unresolved blocker. Case validation always reports
 `ready_for_execution: false`.
+
+WAINGRO 0.11.0 adds plan-bound containment primitives for later KVM-only
+validation: an immutable OpenClaw skill alias, read-only digest-bound synthetic
+JSON, root-owned no-op `openclaw` and `crontab` shims, and an in-guest DNS plus
+HTTP(S) sinkhole. A fixed JSON response is served only for its exact host, TLS
+SNI name, method, path, digest, and size. The guest refuses to install a shim if
+the corresponding real command exists. Candidate output, process count, file
+size, trace size, wall time, overlay allocation, and host free space remain
+bounded.
+
+`check-controls` verifies a 14-control, digest-pinned benign catalog and always
+reports both transfer and execution as unauthorized. The controls cover benign
+and negative behavior, sinkhole DNS/HTTPS, inert command interception, timeout,
+output limiting, resource-policy rejection, missing capabilities, plan/image
+tampering, trace trust, before/after posture, and guest cleanup. The catalog has
+not been run on hanna2, and no corpus candidate has been transferred or
+executed.
 
 ## Detection Coverage
 
@@ -360,6 +378,12 @@ Persistence and automatic approval raise confidence but cannot produce a
 malicious attribution. See the
 [control-plane detection report](research/control-plane-detection-2026-09-12.md).
 
+WAINGRO 0.11.0 implements the generic containment profile and non-authorizing
+benign control catalog needed for the next safety gate. This is preparation,
+not dynamic evidence: hanna2 remains untouched and ClawGrid execution remains
+blocked. See the
+[containment readiness report](research/containment-readiness-2026-09-12.md).
+
 ## Threat-intelligence model
 
 WAINGRO treats public intelligence in deliberately different ways:
@@ -398,6 +422,8 @@ not promoted to an attack verdict.
   unauthorized dynamic shortlist
 - [September 2026 control-plane detection](research/control-plane-detection-2026-09-12.md)
   — generalized remote-authority detection and the fail-closed ClawGrid case
+- [September 2026 containment readiness](research/containment-readiness-2026-09-12.md)
+  — generic isolated-response controls, benign fixtures, and remaining hanna2 gates
 - [ClawHub Ecosystem Security Audit](research/clawhub-audit/) — March 2026 audit of 30,037 skills
 - MCP Ecosystem Security Scan — March 2026 scan of 1,139 MCP servers (paper forthcoming)
 

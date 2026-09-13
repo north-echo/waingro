@@ -3,14 +3,20 @@
 import base64
 import hashlib
 import json
+import os
+import socket
+import ssl
+import subprocess
+import threading
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
 from waingro.dynamic import guest_agent_payload
 from waingro.dynamic.guest_agent_payload import _connect_event_type, _dns_name
 from waingro.dynamic.host import HostPolicy
-from waingro.dynamic.plan import build_dynamic_plan, write_plan
+from waingro.dynamic.plan import build_dynamic_plan, dynamic_job_id, write_plan
 from waingro.dynamic.runner import (
     DynamicRunnerError,
     _allocated_bytes,
@@ -235,7 +241,7 @@ def test_dynamic_plan_requires_policy_and_a_separate_corpus_gate():
         entrypoint="scripts/run.py",
         required_event_types=("process",),
     )
-    assert plan.schema_version == "1.2"
+    assert plan.schema_version == "1.3"
     assert plan.corpus_authorized is True
 
 
@@ -527,16 +533,16 @@ def test_runner_plan_loader_and_domain_xml_have_no_host_share_or_default_network
         tmp_path / "input.iso",
     ).decode()
 
-    assert "type=\"kvm\"" in xml
+    assert 'type="kvm"' in xml
     assert "<filesystem" not in xml
     assert "<hostdev" not in xml
     assert "<interface" not in xml
     assert "<readonly" in xml
-    assert "model=\"selinux\"" in xml
-    assert "<serial type=\"pty\"" in xml
-    assert "device=\"cdrom\"" not in xml
-    assert "dev=\"vdb\" bus=\"virtio\"" in xml
-    assert "model=\"none\"" in xml
+    assert 'model="selinux"' in xml
+    assert '<serial type="pty"' in xml
+    assert 'device="cdrom"' not in xml
+    assert 'dev="vdb" bus="virtio"' in xml
+    assert 'model="none"' in xml
     assert "qemu:commandline" in xml
     assert "elevateprivileges=deny" in xml
 
@@ -573,9 +579,7 @@ def test_runner_extracts_bounded_guest_trace(tmp_path):
     encoded = base64.b64encode(raw).decode()
     serial = tmp_path / "serial.log"
     serial.write_bytes(
-        b"boot noise \xff\nWAINGRO_TRACE_BEGIN\n"
-        + encoded.encode()
-        + b"\nWAINGRO_TRACE_END\n"
+        b"boot noise \xff\nWAINGRO_TRACE_BEGIN\n" + encoded.encode() + b"\nWAINGRO_TRACE_END\n"
     )
 
     assert _extract_trace(serial) == raw
@@ -630,9 +634,298 @@ def test_guest_telemetry_ignores_local_ipc_and_identifies_dns():
 
 def test_loopback_sinkhole_dns_parser_extracts_only_a_bounded_query():
     query = (
-        b"\x12\x34\x01\x00\x00\x01\x00\x00\x00\x00\x00\x00"
-        b"\x07example\x03com\x00\x00\x01\x00\x01"
+        b"\x12\x34\x01\x00\x00\x01\x00\x00\x00\x00\x00\x00\x07example\x03com\x00\x00\x01\x00\x01"
     )
 
     assert _dns_name(query) == ("example.com", 1, len(query))
     assert _dns_name(b"short") is None
+
+
+def test_dynamic_plan_binds_containment_profile_bytes_and_controls():
+    response = b'{"status":"synthetic"}\n'
+    configuration = b'{"api_key":"WAINGRO_CANARY","api_base":"https://fixture.invalid"}\n'
+
+    plan = build_dynamic_plan(
+        _script_artifact(),
+        base_image="waingro-base.qcow2",
+        base_image_sha256="c" * 64,
+        host_policy_sha256=HOST_POLICY_DIGEST,
+        network_policy="loopback-sinkhole",
+        authorize_execution=True,
+        interpreter="python",
+        entrypoint="scripts/run.py",
+        openclaw_skill_slug="benign-control",
+        inert_command_shims=("openclaw", "crontab"),
+        sinkhole_http_host="fixture.invalid",
+        sinkhole_http_method="POST",
+        sinkhole_http_path="/api/heartbeat",
+        sinkhole_http_body=response,
+        synthetic_json_files=((".benign/config.json", configuration),),
+        required_event_types=("process", "network"),
+    )
+
+    containment = plan.to_dict()["execution"]["containment"]
+    sinkhole = containment["sinkhole_http_response"]
+    assert plan.schema_version == "1.3"
+    assert containment["openclaw_skill_slug"] == "benign-control"
+    assert containment["inert_command_shims"] == ["openclaw", "crontab"]
+    assert sinkhole["sha256"] == hashlib.sha256(response).hexdigest()
+    assert base64.b64decode(sinkhole["body_base64"]) == response
+    assert base64.b64decode(containment["synthetic_json_files"][0]["body_base64"]) == configuration
+    assert "openssl" in plan.required_executables
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"sinkhole_http_host": "fixture.invalid"},
+        {
+            "sinkhole_http_host": "127.0.0.1",
+            "sinkhole_http_method": "POST",
+            "sinkhole_http_path": "/fixture",
+            "sinkhole_http_body": b"{}",
+            "network_policy": "loopback-sinkhole",
+        },
+        {
+            "sinkhole_http_host": "fixture.invalid",
+            "sinkhole_http_method": "POST",
+            "sinkhole_http_path": "/fixture",
+            "sinkhole_http_body": b"not-json",
+            "network_policy": "loopback-sinkhole",
+        },
+        {
+            "sinkhole_http_host": "fixture.invalid",
+            "sinkhole_http_method": "post",
+            "sinkhole_http_path": "/fixture",
+            "sinkhole_http_body": b"{}",
+            "network_policy": "loopback-sinkhole",
+        },
+        {"synthetic_json_files": (("../escape.json", b"{}"),)},
+        {"inert_command_shims": ("openclaw", "openclaw")},
+        {
+            "inert_command_shims": ("openclaw",),
+            "required_executables": ("openclaw",),
+        },
+    ],
+)
+def test_dynamic_plan_rejects_invalid_containment_profiles(overrides):
+    arguments = {
+        "base_image": "waingro-base.qcow2",
+        "base_image_sha256": "c" * 64,
+        "host_policy_sha256": HOST_POLICY_DIGEST,
+        "interpreter": "python",
+        "entrypoint": "scripts/run.py",
+    }
+    arguments.update(overrides)
+
+    with pytest.raises(ValueError):
+        build_dynamic_plan(_script_artifact(), **arguments)
+
+
+def test_runner_revalidates_embedded_response_identity(tmp_path):
+    plan = build_dynamic_plan(
+        _script_artifact(),
+        base_image="waingro-base.qcow2",
+        base_image_sha256="c" * 64,
+        host_policy_sha256=HOST_POLICY_DIGEST,
+        network_policy="loopback-sinkhole",
+        authorize_execution=True,
+        interpreter="python",
+        entrypoint="scripts/run.py",
+        sinkhole_http_host="fixture.invalid",
+        sinkhole_http_method="POST",
+        sinkhole_http_path="/fixture",
+        sinkhole_http_body=b'{"status":"synthetic"}',
+        required_event_types=("network",),
+    ).to_dict()
+    plan["execution"]["containment"]["sinkhole_http_response"]["body_base64"] = base64.b64encode(
+        b'{"status":"changed"}'
+    ).decode("ascii")
+    plan["job_id"] = dynamic_job_id(plan)
+    path = tmp_path / "plan.json"
+    path.write_text(json.dumps(plan), encoding="utf-8")
+
+    with pytest.raises(DynamicRunnerError, match="identity"):
+        _load_plan(path)
+
+
+def test_inert_shims_are_no_op_and_precede_guest_path(tmp_path, monkeypatch):
+    shim_dir = tmp_path / "shims"
+    monkeypatch.setattr(guest_agent_payload, "SHIM_DIR", shim_dir)
+    monkeypatch.setattr(guest_agent_payload.os, "chown", lambda *_args: None)
+    plan = {"execution": {"containment": {"inert_command_shims": ["openclaw", "crontab"]}}}
+    environment = {"PATH": "/usr/bin:/bin"}
+
+    guest_agent_payload._install_inert_shims(plan, environment)
+
+    assert environment["PATH"].split(":", 1)[0] == str(shim_dir)
+    for name in ("openclaw", "crontab"):
+        result = subprocess.run(  # noqa: S603 -- executes only the generated inert test shim.
+            ["/bin/bash", str(shim_dir / name), "ignored"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert result.returncode == 0
+        assert result.stdout == f"WAINGRO_INERT_SHIM:{name}\n"
+
+
+def test_openclaw_layout_is_an_immutable_alias_to_candidate(tmp_path, monkeypatch):
+    home = tmp_path / "home"
+    home.mkdir()
+    candidate = tmp_path / "candidate"
+    candidate.mkdir()
+    monkeypatch.setattr(guest_agent_payload, "CANDIDATE", candidate)
+    monkeypatch.setattr(guest_agent_payload.os, "chown", lambda *_args: None)
+    plan = {"execution": {"containment": {"openclaw_skill_slug": "benign-control"}}}
+
+    guest_agent_payload._stage_openclaw_layout(plan, home)
+
+    link = home / ".openclaw" / "workspace" / "skills" / "benign-control"
+    assert link.is_symlink()
+    assert link.resolve() == candidate.resolve()
+    assert (link.parent.stat().st_mode & 0o777) == 0o555
+
+
+def test_synthetic_json_is_digest_checked_and_bound_read_only(tmp_path, monkeypatch):
+    body = b'{"status":"synthetic"}'
+    record = {
+        "home_path": ".benign/config.json",
+        "sha256": hashlib.sha256(body).hexdigest(),
+        "size_bytes": len(body),
+        "body_base64": base64.b64encode(body).decode("ascii"),
+    }
+    home = tmp_path / "home"
+    home.mkdir()
+    fixture_dir = tmp_path / "fixtures"
+    mounted = []
+    monkeypatch.setattr(guest_agent_payload, "FIXTURE_DIR", fixture_dir)
+    monkeypatch.setattr(
+        guest_agent_payload.pwd,
+        "getpwnam",
+        lambda _name: SimpleNamespace(pw_uid=os.getuid(), pw_gid=os.getgid()),
+    )
+    monkeypatch.setattr(guest_agent_payload.os, "chown", lambda *_args: None)
+    monkeypatch.setattr(
+        guest_agent_payload,
+        "_bind_read_only",
+        lambda source, target: mounted.append((source, target)),
+    )
+    plan = {"execution": {"containment": {"synthetic_json_files": [record]}}}
+
+    guest_agent_payload._stage_synthetic_json(plan, home)
+
+    assert (fixture_dir / "0.json").read_bytes() == body
+    assert (fixture_dir / "0.json").stat().st_mode & 0o777 == 0o444
+    assert mounted == [(fixture_dir / "0.json", home / ".benign" / "config.json")]
+
+
+def test_fixed_response_https_sinkhole_is_local_and_route_exact(tmp_path):
+    host = "fixture.invalid"
+    body = b'{"status":"synthetic"}'
+    response = {
+        "host": host,
+        "method": "POST",
+        "path": "/api/heartbeat",
+        "sha256": hashlib.sha256(body).hexdigest(),
+        "size_bytes": len(body),
+        "body_base64": base64.b64encode(body).decode("ascii"),
+    }
+    tls_context, certificate = guest_agent_payload._create_tls_context(host, tmp_path / "tls")
+    server_socket, client_socket = socket.socketpair()
+
+    class OneConnectionServer:
+        accepted = False
+
+        def accept(self):
+            if self.accepted:
+                raise OSError("closed")
+            self.accepted = True
+            return server_socket, None
+
+    thread = threading.Thread(
+        target=guest_agent_payload._http_sinkhole,
+        args=(OneConnectionServer(),),
+        kwargs={"tls": True, "tls_context": tls_context, "response": response},
+        daemon=True,
+    )
+    thread.start()
+    client_context = ssl.create_default_context(cafile=str(certificate))
+    with client_context.wrap_socket(client_socket, server_hostname=host) as client:
+        client.sendall(
+            b"POST /api/heartbeat HTTP/1.1\r\nHost: fixture.invalid\r\nContent-Length: 0\r\n\r\n"
+        )
+        reply = client.recv(4096)
+    thread.join(timeout=2)
+
+    assert b"HTTP/1.1 200 OK" in reply
+    assert reply.endswith(body)
+
+
+def test_fixed_response_sinkhole_rejects_an_unplanned_method():
+    body = b'{"status":"synthetic"}'
+    response = {
+        "host": "fixture.invalid",
+        "method": "POST",
+        "path": "/api/heartbeat",
+        "sha256": hashlib.sha256(body).hexdigest(),
+        "size_bytes": len(body),
+        "body_base64": base64.b64encode(body).decode("ascii"),
+    }
+    server_socket, client_socket = socket.socketpair()
+
+    class OneConnectionServer:
+        accepted = False
+
+        def accept(self):
+            if self.accepted:
+                raise OSError("closed")
+            self.accepted = True
+            return server_socket, None
+
+    thread = threading.Thread(
+        target=guest_agent_payload._http_sinkhole,
+        args=(OneConnectionServer(),),
+        kwargs={"response": response},
+        daemon=True,
+    )
+    thread.start()
+    with client_socket:
+        client_socket.sendall(b"GET /api/heartbeat HTTP/1.1\r\nHost: fixture.invalid\r\n\r\n")
+        reply = client_socket.recv(4096)
+
+    thread.join(timeout=2)
+    assert b"404 Not Found" in reply
+    assert not reply.endswith(body)
+
+
+def test_fixed_response_https_sinkhole_rejects_unplanned_sni(tmp_path):
+    host = "fixture.invalid"
+    tls_context, certificate = guest_agent_payload._create_tls_context(host, tmp_path / "tls")
+    server_socket, client_socket = socket.socketpair()
+
+    class OneConnectionServer:
+        accepted = False
+
+        def accept(self):
+            if self.accepted:
+                raise OSError("closed")
+            self.accepted = True
+            return server_socket, None
+
+    thread = threading.Thread(
+        target=guest_agent_payload._http_sinkhole,
+        args=(OneConnectionServer(),),
+        kwargs={"tls": True, "tls_context": tls_context},
+        daemon=True,
+    )
+    thread.start()
+    client_context = ssl.create_default_context(cafile=str(certificate))
+
+    with (
+        client_socket,
+        pytest.raises(ssl.SSLError),
+        client_context.wrap_socket(client_socket, server_hostname="other.invalid"),
+    ):
+        pass
+    thread.join(timeout=2)

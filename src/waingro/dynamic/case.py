@@ -7,6 +7,7 @@ import json
 import re
 from pathlib import Path, PurePosixPath
 
+from waingro.dynamic.plan import INERT_COMMAND_SHIMS
 from waingro.parsers.script import read_file_bytes
 from waingro.scanner import scan_skill
 
@@ -18,6 +19,10 @@ MAX_ENTRYPOINTS = 32
 _DIGEST_RE = re.compile(r"^[0-9a-f]{64}$")
 _NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 _ENTRYPOINT_RE = re.compile(r"^[A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)?$")
+_HOST_RE = re.compile(
+    r"^(?=.{1,253}$)(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?\.)+"
+    r"[A-Za-z](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?$"
+)
 _REQUIRED_CONTROLS = {
     "benign-canary",
     "negative-control",
@@ -141,6 +146,105 @@ def _entrypoint_records(value: object) -> list[dict]:
     return records
 
 
+def _home_json_path(value: object) -> str:
+    if not isinstance(value, str):
+        raise DynamicCaseError("synthetic JSON home path violates policy")
+    path = PurePosixPath(value)
+    if (
+        path.is_absolute()
+        or ".." in path.parts
+        or not 2 <= len(path.parts) <= 4
+        or not path.parts[0].startswith(".")
+        or path.parts[0] in {".aws", ".ssh"}
+        or path.suffix.lower() != ".json"
+        or any(not re.fullmatch(r"[A-Za-z0-9._-]+", part) for part in path.parts)
+    ):
+        raise DynamicCaseError("synthetic JSON home path violates policy")
+    return value
+
+
+def _containment_profile(raw: object, fixture_paths: set[str]) -> dict:
+    expected_fields = {
+        "openclaw_skill_slug",
+        "inert_command_shims",
+        "sinkhole_http_response",
+        "synthetic_json_files",
+    }
+    if not isinstance(raw, dict) or set(raw) != expected_fields:
+        raise DynamicCaseError("dynamic case containment profile is invalid")
+
+    slug = raw.get("openclaw_skill_slug")
+    if not isinstance(slug, str) or not _NAME_RE.fullmatch(slug):
+        raise DynamicCaseError("OpenClaw skill slug violates policy")
+
+    shims = raw.get("inert_command_shims")
+    if (
+        not isinstance(shims, list)
+        or not shims
+        or len(shims) != len(set(shims))
+        or any(item not in INERT_COMMAND_SHIMS for item in shims)
+    ):
+        raise DynamicCaseError("inert command shim set violates policy")
+
+    response = raw.get("sinkhole_http_response")
+    if not isinstance(response, dict) or set(response) != {
+        "host",
+        "method",
+        "path",
+        "fixture",
+    }:
+        raise DynamicCaseError("sinkhole response profile is invalid")
+    host = response.get("host")
+    method = response.get("method")
+    request_path = response.get("path")
+    fixture = response.get("fixture")
+    if (
+        not isinstance(host, str)
+        or host != host.lower()
+        or not _HOST_RE.fullmatch(host)
+        or method not in {"GET", "POST"}
+        or not isinstance(request_path, str)
+        or not request_path.startswith("/")
+        or len(request_path) > 2048
+        or any(ord(character) < 0x21 or ord(character) > 0x7E for character in request_path)
+        or "#" in request_path
+        or not isinstance(fixture, str)
+        or fixture not in fixture_paths
+    ):
+        raise DynamicCaseError("sinkhole response profile violates policy")
+
+    files = raw.get("synthetic_json_files")
+    if not isinstance(files, list) or not files or len(files) > 8:
+        raise DynamicCaseError("synthetic JSON profile is invalid")
+    file_records = []
+    seen_paths: set[str] = set()
+    for item in files:
+        if not isinstance(item, dict) or set(item) != {"home_path", "fixture"}:
+            raise DynamicCaseError("synthetic JSON profile is invalid")
+        home_path = _home_json_path(item.get("home_path"))
+        fixture_path = item.get("fixture")
+        if (
+            home_path in seen_paths
+            or not isinstance(fixture_path, str)
+            or fixture_path not in fixture_paths
+        ):
+            raise DynamicCaseError("synthetic JSON profile violates policy")
+        seen_paths.add(home_path)
+        file_records.append({"home_path": home_path, "fixture": fixture_path})
+
+    return {
+        "openclaw_skill_slug": slug,
+        "inert_command_shims": shims,
+        "sinkhole_http_response": {
+            "host": host,
+            "method": method,
+            "path": request_path,
+            "fixture": fixture,
+        },
+        "synthetic_json_files": file_records,
+    }
+
+
 def validate_dynamic_case(case_path: Path, candidate: Path | None = None) -> dict:
     """Validate a case dossier and optional candidate without creating an execution plan."""
     case_path = _non_symlink_path(case_path, label="dynamic case")
@@ -192,6 +296,10 @@ def validate_dynamic_case(case_path: Path, candidate: Path | None = None) -> dic
         raise DynamicCaseError("pre-execution case must not select an entrypoint")
     entrypoints = _entrypoint_records(raw.get("proposed_entrypoints"))
     fixtures = _fixture_records(case_path, raw.get("fixtures"))
+    containment = _containment_profile(
+        raw.get("containment_profile"),
+        {item["path"] for item in fixtures},
+    )
     controls = set(
         _string_list(raw.get("required_controls"), label="required controls", maximum=32)
     )
@@ -239,6 +347,7 @@ def validate_dynamic_case(case_path: Path, candidate: Path | None = None) -> dic
         "artifact_sha256": artifact["sha256"],
         "artifact_matches_candidate": artifact_matches,
         "fixtures_verified": fixtures,
+        "containment_profile": containment,
         "proposed_entrypoints": entrypoints,
         "blockers": blockers,
         "execution_authorized": False,

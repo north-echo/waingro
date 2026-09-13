@@ -33,6 +33,9 @@ import yaml
 from waingro.dynamic.host import DEFAULT_HOST_POLICY, HostPolicyError, require_host_posture
 from waingro.dynamic.plan import (
     COVERAGE_EVENT_TYPES,
+    INERT_COMMAND_SHIMS,
+    MAX_EMBEDDED_JSON_BYTES,
+    MAX_SYNTHETIC_JSON_FILES,
     SYNTHETIC_VALUE_PROFILES,
     dynamic_job_id,
     synthetic_environment_name_allowed,
@@ -54,6 +57,10 @@ MAX_ARTIFACT_BYTES = 1024 * 1024 * 1024
 MAX_OVERLAY_BYTES = 4 * 1024 * 1024 * 1024
 MIN_HOST_FREE_BYTES = 12 * 1024 * 1024 * 1024
 _CAMPAIGN_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
+_HOST_RE = re.compile(
+    r"^(?=.{1,253}$)(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?\.)+"
+    r"[A-Za-z](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?$"
+)
 
 
 class DynamicRunnerError(RuntimeError):
@@ -123,7 +130,7 @@ def _load_plan(path: Path) -> dict:
         plan = json.loads(payload)
     except (UnicodeDecodeError, json.JSONDecodeError) as exc:
         raise DynamicRunnerError("dynamic plan is not valid JSON") from exc
-    if not isinstance(plan, dict) or plan.get("schema_version") != "1.2":
+    if not isinstance(plan, dict) or plan.get("schema_version") != "1.3":
         raise DynamicRunnerError("unsupported dynamic plan schema")
     job_id = plan.get("job_id")
     artifact = plan.get("artifact")
@@ -207,8 +214,7 @@ def _load_plan(path: Path) -> dict:
     ):
         raise DynamicRunnerError("dynamic scenario entrypoint violates path policy")
     if len(arguments) > 32 or any(
-        not isinstance(arg, str) or len(arg) > 1024 or "\0" in arg
-        for arg in arguments
+        not isinstance(arg, str) or len(arg) > 1024 or "\0" in arg for arg in arguments
     ):
         raise DynamicRunnerError("dynamic scenario arguments violate policy")
     allowed_suffixes = {
@@ -235,6 +241,125 @@ def _load_plan(path: Path) -> dict:
     ]
     if expected_interpreter not in required_executables:
         raise DynamicRunnerError("dynamic scenario does not require its interpreter")
+    containment = execution.get("containment")
+    if not isinstance(containment, dict) or set(containment) != {
+        "openclaw_skill_slug",
+        "inert_command_shims",
+        "sinkhole_http_response",
+        "synthetic_json_files",
+    }:
+        raise DynamicRunnerError("dynamic containment profile is missing or malformed")
+    skill_slug = containment.get("openclaw_skill_slug")
+    if skill_slug is not None and (
+        not isinstance(skill_slug, str) or not _CAMPAIGN_RE.fullmatch(skill_slug)
+    ):
+        raise DynamicRunnerError("dynamic OpenClaw staging slug violates policy")
+    shims = containment.get("inert_command_shims")
+    if (
+        not isinstance(shims, list)
+        or len(shims) != len(set(shims))
+        or any(item not in INERT_COMMAND_SHIMS for item in shims)
+        or any(item in required_executables for item in shims)
+    ):
+        raise DynamicRunnerError("dynamic inert command shims violate policy")
+    response = containment.get("sinkhole_http_response")
+    if response is not None:
+        if execution.get("network_policy") != "loopback-sinkhole":
+            raise DynamicRunnerError("sinkhole response requires loopback-sinkhole networking")
+        if not isinstance(response, dict) or set(response) != {
+            "host",
+            "method",
+            "path",
+            "status",
+            "content_type",
+            "sha256",
+            "size_bytes",
+            "body_base64",
+        }:
+            raise DynamicRunnerError("dynamic sinkhole response is malformed")
+        response_host = response.get("host")
+        response_method = response.get("method")
+        response_path = response.get("path")
+        response_digest = response.get("sha256")
+        response_size = response.get("size_bytes")
+        if (
+            not isinstance(response_host, str)
+            or response_host != response_host.lower()
+            or not _HOST_RE.fullmatch(response_host)
+            or response_method not in {"GET", "POST"}
+            or not isinstance(response_path, str)
+            or not response_path.startswith("/")
+            or len(response_path) > 2048
+            or any(ord(character) < 0x21 or ord(character) > 0x7E for character in response_path)
+            or "#" in response_path
+            or response.get("status") != 200
+            or response.get("content_type") != "application/json"
+            or not isinstance(response_digest, str)
+            or not _DIGEST_RE.fullmatch(response_digest)
+            or not isinstance(response_size, int)
+            or not 0 < response_size <= MAX_EMBEDDED_JSON_BYTES
+            or not isinstance(response.get("body_base64"), str)
+        ):
+            raise DynamicRunnerError("dynamic sinkhole response violates policy")
+        try:
+            response_body = base64.b64decode(response["body_base64"], validate=True)
+            response_json = json.loads(response_body)
+        except (ValueError, UnicodeDecodeError, json.JSONDecodeError, binascii.Error) as exc:
+            raise DynamicRunnerError("dynamic sinkhole response body is invalid") from exc
+        if (
+            not isinstance(response_json, dict)
+            or len(response_body) != response_size
+            or hashlib.sha256(response_body).hexdigest() != response_digest
+            or "openssl" not in required_executables
+        ):
+            raise DynamicRunnerError("dynamic sinkhole response identity is invalid")
+    synthetic_files = containment.get("synthetic_json_files")
+    if not isinstance(synthetic_files, list) or len(synthetic_files) > MAX_SYNTHETIC_JSON_FILES:
+        raise DynamicRunnerError("dynamic synthetic JSON files violate policy")
+    synthetic_paths = []
+    for record in synthetic_files:
+        if not isinstance(record, dict) or set(record) != {
+            "home_path",
+            "sha256",
+            "size_bytes",
+            "body_base64",
+        }:
+            raise DynamicRunnerError("dynamic synthetic JSON file is malformed")
+        home_path = record.get("home_path")
+        record_digest = record.get("sha256")
+        record_size = record.get("size_bytes")
+        if not isinstance(home_path, str):
+            raise DynamicRunnerError("dynamic synthetic JSON home path is invalid")
+        relative_home = PurePosixPath(home_path)
+        if (
+            relative_home.is_absolute()
+            or ".." in relative_home.parts
+            or not 2 <= len(relative_home.parts) <= 4
+            or not relative_home.parts[0].startswith(".")
+            or relative_home.parts[0] in {".aws", ".ssh"}
+            or relative_home.suffix.lower() != ".json"
+            or any(not re.fullmatch(r"[A-Za-z0-9._-]+", part) for part in relative_home.parts)
+            or not isinstance(record_digest, str)
+            or not _DIGEST_RE.fullmatch(record_digest)
+            or not isinstance(record_size, int)
+            or not 0 < record_size <= MAX_EMBEDDED_JSON_BYTES
+            or not isinstance(record.get("body_base64"), str)
+        ):
+            raise DynamicRunnerError("dynamic synthetic JSON file violates policy")
+        try:
+            record_body = base64.b64decode(record["body_base64"], validate=True)
+            record_json = json.loads(record_body)
+        except (ValueError, UnicodeDecodeError, json.JSONDecodeError, binascii.Error) as exc:
+            raise DynamicRunnerError("dynamic synthetic JSON file body is invalid") from exc
+        if (
+            not isinstance(record_json, dict)
+            or len(record_body) != record_size
+            or hashlib.sha256(record_body).hexdigest() != record_digest
+        ):
+            raise DynamicRunnerError("dynamic synthetic JSON file identity is invalid")
+        synthetic_paths.append(home_path)
+    if len(synthetic_paths) != len(set(synthetic_paths)):
+        raise DynamicRunnerError("dynamic synthetic JSON paths are duplicated")
     synthetic_environment = scenario.get("synthetic_environment")
     if (
         not isinstance(synthetic_environment, dict)
@@ -335,8 +460,7 @@ def _verify_base_capabilities(base_image: Path, base_digest: str, required: list
         or len(executables) > 256
         or len(executables) != len(set(executables))
         or any(
-            not isinstance(item, str) or not _EXECUTABLE_RE.fullmatch(item)
-            for item in executables
+            not isinstance(item, str) or not _EXECUTABLE_RE.fullmatch(item) for item in executables
         )
     ):
         raise DynamicRunnerError("base image capability manifest violates policy")
@@ -450,21 +574,25 @@ def _write_input_tree(stage: Path, plan_path: Path, candidate: Path, plan: dict)
         encoding="utf-8",
     )
     cloud_config = {
-        "users": [{
-            "name": "waingro",
-            "lock_passwd": True,
-            "shell": "/sbin/nologin",
-            "no_create_home": False,
-        }],
+        "users": [
+            {
+                "name": "waingro",
+                "lock_passwd": True,
+                "shell": "/sbin/nologin",
+                "no_create_home": False,
+            }
+        ],
         "ssh_pwauth": False,
         "disable_root": True,
-        "write_files": [{
-            "path": "/usr/local/libexec/waingro-guest-agent.py",
-            "owner": "root:root",
-            "permissions": "0500",
-            "encoding": "b64",
-            "content": base64.b64encode(_guest_agent_bytes()).decode("ascii"),
-        }],
+        "write_files": [
+            {
+                "path": "/usr/local/libexec/waingro-guest-agent.py",
+                "owner": "root:root",
+                "permissions": "0500",
+                "encoding": "b64",
+                "content": base64.b64encode(_guest_agent_bytes()).decode("ascii"),
+            }
+        ],
         "runcmd": [["/usr/bin/python3", "/usr/local/libexec/waingro-guest-agent.py"]],
     }
     (stage / "user-data").write_text(
@@ -554,16 +682,19 @@ def _sign_trace(trace_path: Path, signing_key: Path) -> Path:
     signature = Path(str(trace_path) + ".sig")
     if signature.exists():
         raise DynamicRunnerError(f"signature output already exists: {signature}")
-    _run_command([
-        "ssh-keygen",
-        "-Y",
-        "sign",
-        "-f",
-        str(signing_key.resolve()),
-        "-n",
-        "waingro-runtime-v1",
-        str(trace_path.resolve()),
-    ], timeout=15)
+    _run_command(
+        [
+            "ssh-keygen",
+            "-Y",
+            "sign",
+            "-f",
+            str(signing_key.resolve()),
+            "-n",
+            "waingro-runtime-v1",
+            str(trace_path.resolve()),
+        ],
+        timeout=15,
+    )
     if not signature.is_file():
         raise DynamicRunnerError("ssh-keygen did not create the runtime signature")
     return signature
@@ -643,22 +774,53 @@ def run_dynamic_job(
         overlay = job_dir / "overlay.qcow2"
         serial_log = job_dir / "serial.log"
         domain_xml = job_dir / "domain.xml"
-        _run_command([
-            "xorriso", "-as", "mkisofs", "-quiet", "-V", "cidata",
-            "-J", "-r", "-o", str(input_iso), str(stage),
-        ], timeout=60)
-        _run_command([
-            "qemu-img", "create", "-q", "-f", "qcow2", "-F", "qcow2",
-            "-b", str(base_image), str(overlay),
-        ], timeout=30)
+        _run_command(
+            [
+                "xorriso",
+                "-as",
+                "mkisofs",
+                "-quiet",
+                "-V",
+                "cidata",
+                "-J",
+                "-r",
+                "-o",
+                str(input_iso),
+                str(stage),
+            ],
+            timeout=60,
+        )
+        _run_command(
+            [
+                "qemu-img",
+                "create",
+                "-q",
+                "-f",
+                "qcow2",
+                "-F",
+                "qcow2",
+                "-b",
+                str(base_image),
+                str(overlay),
+            ],
+            timeout=30,
+        )
         domain_xml.write_bytes(_build_domain_xml(plan, overlay, input_iso))
         console_process = None
         console_output = None
         console_master = None
         try:
-            _run_command([
-                "virsh", "-c", "qemu:///system", "create", str(domain_xml), "--validate",
-            ], timeout=30)
+            _run_command(
+                [
+                    "virsh",
+                    "-c",
+                    "qemu:///system",
+                    "create",
+                    str(domain_xml),
+                    "--validate",
+                ],
+                timeout=30,
+            )
             domain_started = True
             virsh = shutil.which("virsh") or "/usr/bin/virsh"
             console_descriptor = os.open(
@@ -672,7 +834,11 @@ def run_dynamic_job(
                 console_process = subprocess.Popen(  # noqa: S603 -- fixed libvirt console.
                     [
                         virsh,
-                        "-c", "qemu:///system", "console", job_id, "--force",
+                        "-c",
+                        "qemu:///system",
+                        "console",
+                        job_id,
+                        "--force",
                     ],
                     stdin=console_slave,
                     stdout=console_slave,
@@ -703,7 +869,10 @@ def run_dynamic_job(
                 state = subprocess.run(  # noqa: S603 -- fixed virsh status query.
                     [
                         shutil.which("virsh") or "/usr/bin/virsh",
-                        "-c", "qemu:///system", "domstate", job_id,
+                        "-c",
+                        "qemu:///system",
+                        "domstate",
+                        job_id,
                     ],
                     capture_output=True,
                     text=True,
@@ -729,16 +898,26 @@ def run_dynamic_job(
                     break
             else:
                 timed_out = True
-                _run_command([
-                    "virsh", "-c", "qemu:///system", "destroy", job_id,
-                ], timeout=20)
+                _run_command(
+                    [
+                        "virsh",
+                        "-c",
+                        "qemu:///system",
+                        "destroy",
+                        job_id,
+                    ],
+                    timeout=20,
+                )
                 domain_started = False
         finally:
             if domain_started:
                 subprocess.run(  # noqa: S603 -- exact transient domain cleanup.
                     [
                         shutil.which("virsh") or "/usr/bin/virsh",
-                        "-c", "qemu:///system", "destroy", job_id,
+                        "-c",
+                        "qemu:///system",
+                        "destroy",
+                        job_id,
                     ],
                     capture_output=True,
                     text=True,

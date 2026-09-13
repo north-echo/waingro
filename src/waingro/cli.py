@@ -11,7 +11,14 @@ from waingro.analyzers.hybrid import assess_scan
 from waingro.analyzers.risk_profile import compute_risk_profile
 from waingro.dynamic.campaign import CampaignPreparationError, prepare_campaign_queue
 from waingro.dynamic.case import DynamicCaseError, validate_dynamic_case
-from waingro.dynamic.plan import build_dynamic_plan, preflight_hanna2, write_plan
+from waingro.dynamic.controls import DynamicControlError, validate_control_suite
+from waingro.dynamic.plan import (
+    INERT_COMMAND_SHIMS,
+    build_dynamic_plan,
+    preflight_hanna2,
+    read_embedded_json,
+    write_plan,
+)
 from waingro.dynamic.runner import DynamicRunnerError, run_dynamic_job
 from waingro.dynamic.trace import load_runtime_trace
 from waingro.ecosystem import load_ecosystem_context
@@ -689,6 +696,20 @@ def dynamic_check_case(case: Path, candidate: Path | None) -> None:
     click.echo(json.dumps(report, indent=2))
 
 
+@dynamic.command("check-controls")
+@click.argument(
+    "suite",
+    type=click.Path(exists=True, dir_okay=False, path_type=Path),
+)
+def dynamic_check_controls(suite: Path) -> None:
+    """Validate the benign hanna2 control catalog without running it."""
+    try:
+        report = validate_control_suite(suite)
+    except (DynamicControlError, OSError, ValueError) as exc:
+        raise click.ClickException(str(exc)) from exc
+    click.echo(json.dumps(report, indent=2))
+
+
 @dynamic.command("prepare-campaign")
 @click.argument("input_jsonl", type=click.Path(exists=True, dir_okay=False, path_type=Path))
 @click.option(
@@ -799,6 +820,39 @@ def dynamic_prepare_campaign(
     help="Inject a named guest-only canary using a fixed value profile.",
 )
 @click.option(
+    "--openclaw-skill-slug",
+    default=None,
+    help="Expose the immutable artifact at OpenClaw's expected guest-only skill path.",
+)
+@click.option(
+    "--inert-shim",
+    "inert_command_shims",
+    multiple=True,
+    type=click.Choice(sorted(INERT_COMMAND_SHIMS)),
+    help="Replace an absent guest command with a no-op recording shim.",
+)
+@click.option(
+    "--sinkhole-json",
+    type=click.Path(exists=True, dir_okay=False, path_type=Path),
+    default=None,
+    help="Bounded JSON body served by the guest-only HTTP(S) sinkhole.",
+)
+@click.option("--sinkhole-host", default=None, help="Exact synthetic sinkhole Host/SNI name.")
+@click.option(
+    "--sinkhole-method",
+    type=click.Choice(["GET", "POST"]),
+    default=None,
+    help="Exact synthetic sinkhole HTTP method.",
+)
+@click.option("--sinkhole-path", default=None, help="Exact synthetic sinkhole request path.")
+@click.option(
+    "--synthetic-json",
+    "synthetic_json_files",
+    multiple=True,
+    metavar="HOME_PATH=JSON_FILE",
+    help="Embed a read-only JSON object at a guest-home-relative path.",
+)
+@click.option(
     "--require-event",
     "required_event_types",
     multiple=True,
@@ -831,6 +885,13 @@ def dynamic_plan(
     arguments: tuple[str, ...],
     required_executables: tuple[str, ...],
     synthetic_environment: tuple[str, ...],
+    openclaw_skill_slug: str | None,
+    inert_command_shims: tuple[str, ...],
+    sinkhole_json: Path | None,
+    sinkhole_host: str | None,
+    sinkhole_method: str | None,
+    sinkhole_path: str | None,
+    synthetic_json_files: tuple[str, ...],
     required_event_types: tuple[str, ...],
     require_exit_zero: bool,
     output: Path,
@@ -846,6 +907,13 @@ def dynamic_plan(
             if not separator:
                 raise ValueError("--synthetic-env must use NAME=PROFILE")
             parsed_environment.append((name, profile))
+        parsed_json_files = []
+        for item in synthetic_json_files:
+            home_path, separator, source_path = item.partition("=")
+            if not separator:
+                raise ValueError("--synthetic-json must use HOME_PATH=JSON_FILE")
+            parsed_json_files.append((home_path, read_embedded_json(Path(source_path))))
+        sinkhole_body = read_embedded_json(sinkhole_json) if sinkhole_json else None
         plan = build_dynamic_plan(
             result.artifact_identity,
             base_image=base_image,
@@ -863,6 +931,13 @@ def dynamic_plan(
             arguments=arguments,
             required_executables=required_executables,
             synthetic_environment=tuple(parsed_environment),
+            openclaw_skill_slug=openclaw_skill_slug,
+            inert_command_shims=inert_command_shims,
+            sinkhole_http_host=sinkhole_host,
+            sinkhole_http_method=sinkhole_method,
+            sinkhole_http_path=sinkhole_path,
+            sinkhole_http_body=sinkhole_body,
+            synthetic_json_files=tuple(parsed_json_files),
             required_event_types=required_event_types,
             require_exit_zero=require_exit_zero,
         )

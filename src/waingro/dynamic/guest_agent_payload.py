@@ -8,6 +8,7 @@ unprivileged ``waingro`` guest account and emits a bounded trace on ttyS0.
 from __future__ import annotations
 
 import base64
+import contextlib
 import hashlib
 import json
 import os
@@ -17,6 +18,7 @@ import resource
 import shutil
 import signal
 import socket
+import ssl
 import struct
 import subprocess
 import threading
@@ -27,6 +29,9 @@ from pathlib import Path
 INPUT = Path("/run/waingro-input")
 CANDIDATE = Path("/opt/waingro/candidate")
 TRACE_DIR = Path("/run/waingro-trace")
+SHIM_DIR = Path("/run/waingro-shims")
+FIXTURE_DIR = Path("/run/waingro-fixtures")
+TLS_DIR = Path("/run/waingro-tls")
 MAX_EVENTS = 100_000
 MAX_TRACE_BYTES = 20 * 1024 * 1024
 MAX_CANDIDATE_OUTPUT_BYTES = 8 * 1024 * 1024
@@ -167,6 +172,111 @@ def _validate_guest_contract(plan: dict) -> None:
     ]
     if missing:
         raise RuntimeError("base image lacks required executables: " + ", ".join(missing))
+    shims = plan["execution"]["containment"]["inert_command_shims"]
+    present = [
+        executable
+        for executable in shims
+        if shutil.which(
+            executable,
+            path="/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin",
+        )
+        is not None
+    ]
+    if present:
+        raise RuntimeError(
+            "base image contains commands that must be absent before shimming: "
+            + ", ".join(present)
+        )
+
+
+def _verified_json_body(record: dict, *, label: str) -> bytes:
+    try:
+        body = base64.b64decode(record["body_base64"], validate=True)
+        parsed = json.loads(body)
+    except (KeyError, ValueError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise RuntimeError(f"{label} body is invalid") from exc
+    if (
+        not isinstance(parsed, dict)
+        or len(body) != record.get("size_bytes")
+        or hashlib.sha256(body).hexdigest() != record.get("sha256")
+    ):
+        raise RuntimeError(f"{label} identity is invalid")
+    return body
+
+
+def _stage_openclaw_layout(plan: dict, home: Path) -> None:
+    slug = plan["execution"]["containment"]["openclaw_skill_slug"]
+    if slug is None:
+        return
+    skills = home / ".openclaw" / "workspace" / "skills"
+    skills.mkdir(mode=0o755, parents=True, exist_ok=False)
+    link = skills / slug
+    link.symlink_to(CANDIDATE, target_is_directory=True)
+    for path in (home / ".openclaw", home / ".openclaw" / "workspace", skills):
+        path.chmod(0o555)
+        os.chown(path, 0, 0)
+
+
+def _bind_read_only(source: Path, target: Path) -> None:
+    environment = {"PATH": "/usr/sbin:/usr/bin:/sbin:/bin"}
+    subprocess.run(  # noqa: S603 -- fixed guest-local bind mount.
+        ["/usr/bin/mount", "--bind", str(source), str(target)],
+        check=True,
+        timeout=10,
+        env=environment,
+    )
+    subprocess.run(  # noqa: S603 -- fixed guest-local read-only remount.
+        [
+            "/usr/bin/mount",
+            "-o",
+            "remount,bind,ro,nosuid,nodev,noexec",
+            str(source),
+            str(target),
+        ],
+        check=True,
+        timeout=10,
+        env=environment,
+    )
+
+
+def _stage_synthetic_json(plan: dict, home: Path) -> None:
+    records = plan["execution"]["containment"]["synthetic_json_files"]
+    if not records:
+        return
+    account = pwd.getpwnam("waingro")
+    FIXTURE_DIR.mkdir(mode=0o700, parents=True, exist_ok=False)
+    for index, record in enumerate(records):
+        body = _verified_json_body(record, label="synthetic JSON file")
+        source = FIXTURE_DIR / f"{index}.json"
+        source.write_bytes(body)
+        # The candidate user can read this fixture, but neither copy is writable.
+        source.chmod(0o444)
+        target = home.joinpath(*Path(record["home_path"]).parts)
+        target.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+        for directory in target.parents:
+            if directory == home:
+                break
+            os.chown(directory, account.pw_uid, account.pw_gid)
+        target.touch(mode=0o400, exist_ok=False)
+        os.chown(target, 0, 0)
+        _bind_read_only(source, target)
+
+
+def _install_inert_shims(plan: dict, environment: dict[str, str]) -> None:
+    shims = plan["execution"]["containment"]["inert_command_shims"]
+    if not shims:
+        return
+    SHIM_DIR.mkdir(mode=0o700, parents=True, exist_ok=False)
+    for name in shims:
+        path = SHIM_DIR / name
+        path.write_text(
+            f"#!/usr/bin/bash\n/usr/bin/printf 'WAINGRO_INERT_SHIM:{name}\\n'\nexit 0\n",
+            encoding="ascii",
+        )
+        path.chmod(0o555)
+        os.chown(path, 0, 0)
+    SHIM_DIR.chmod(0o555)
+    environment["PATH"] = f"{SHIM_DIR}:{environment['PATH']}"
 
 
 def _record_sinkhole_event(event: dict) -> None:
@@ -203,13 +313,15 @@ def _dns_sinkhole(server: socket.socket) -> None:
             if parsed is None:
                 continue
             name, query_type, question_end = parsed
-            _record_sinkhole_event(_event(
-                "dns",
-                "sinkhole-query",
-                0,
-                destination=name,
-                labels=["loopback-sinkhole"],
-            ))
+            _record_sinkhole_event(
+                _event(
+                    "dns",
+                    "sinkhole-query",
+                    0,
+                    destination=name,
+                    labels=["loopback-sinkhole"],
+                )
+            )
             answer = b""
             if query_type == 1:
                 answer = b"\xc0\x0c" + struct.pack("!HHIH", 1, 1, 0, 4) + b"\x7f\x00\x00\x01"
@@ -222,57 +334,182 @@ def _dns_sinkhole(server: socket.socket) -> None:
             return
 
 
-def _http_sinkhole(server: socket.socket, *, tls: bool = False) -> None:
+def _receive_http_request(connection: socket.socket) -> bytes:
+    payload = bytearray()
+    while len(payload) < 64 * 1024 and b"\r\n\r\n" not in payload:
+        chunk = connection.recv(min(16 * 1024, 64 * 1024 - len(payload)))
+        if not chunk:
+            break
+        payload.extend(chunk)
+    return bytes(payload)
+
+
+def _create_tls_context(host: str, directory: Path = TLS_DIR) -> tuple[ssl.SSLContext, Path]:
+    directory.mkdir(mode=0o700, parents=True, exist_ok=False)
+    key = directory / "server.key"
+    certificate = directory / "server.crt"
+    openssl = shutil.which("openssl", path="/usr/bin:/bin")
+    if openssl is None:
+        raise RuntimeError("base image lacks openssl for the HTTPS sinkhole")
+    subprocess.run(  # noqa: S603 -- fixed guest-local synthetic certificate generation.
+        [
+            openssl,
+            "req",
+            "-x509",
+            "-newkey",
+            "rsa:2048",
+            "-nodes",
+            "-keyout",
+            str(key),
+            "-out",
+            str(certificate),
+            "-days",
+            "1",
+            "-sha256",
+            "-subj",
+            "/CN=WAINGRO Synthetic Sinkhole",
+            "-addext",
+            f"subjectAltName=DNS:{host}",
+        ],
+        check=True,
+        capture_output=True,
+        timeout=30,
+        env={"PATH": "/usr/bin:/bin", "LANG": "C.UTF-8"},
+    )
+    key.chmod(0o400)
+    certificate.chmod(0o444)
+    context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    context.minimum_version = ssl.TLSVersion.TLSv1_2
+    context.load_cert_chain(certificate, key)
+
+    def require_planned_sni(
+        _socket: ssl.SSLSocket,
+        server_name: str | None,
+        _context: ssl.SSLContext,
+    ) -> int | None:
+        if server_name is None or server_name.lower() != host:
+            return ssl.ALERT_DESCRIPTION_UNRECOGNIZED_NAME
+        return None
+
+    context.set_servername_callback(require_planned_sni)
+    return context, certificate
+
+
+def _http_sinkhole(
+    server: socket.socket,
+    *,
+    tls: bool = False,
+    tls_context: ssl.SSLContext | None = None,
+    response: dict | None = None,
+) -> None:
     while True:
         try:
-            connection, _peer = server.accept()
+            raw_connection, _peer = server.accept()
         except OSError:
             return
+        connection = raw_connection
+        if tls and tls_context is not None:
+            try:
+                connection = tls_context.wrap_socket(raw_connection, server_side=True)
+            except (OSError, ssl.SSLError):
+                raw_connection.close()
+                _record_sinkhole_event(
+                    _event(
+                        "network",
+                        "sinkhole-tls-failure",
+                        0,
+                        destination="127.0.0.1:443",
+                        labels=["loopback-sinkhole"],
+                    )
+                )
+                continue
         with connection:
             connection.settimeout(1)
             try:
-                payload = connection.recv(64 * 1024)
+                payload = _receive_http_request(connection)
             except OSError:
                 payload = b""
             labels = ["loopback-sinkhole"]
             if b"WAINGRO_CANARY_" in payload or b"WAINGRO_SYNTHETIC_" in payload:
                 labels.append("synthetic-canary")
             destination = "127.0.0.1:443" if tls else "127.0.0.1:80"
-            target = "tls-client-hello" if tls else "http-request"
-            if not tls:
-                text = payload.decode("iso-8859-1", errors="replace")
-                lines = text.splitlines()
-                if lines:
-                    parts = lines[0].split()
-                    if len(parts) >= 2:
-                        target = parts[1][:2048]
-                for line in lines[1:]:
-                    name, separator, value = line.partition(":")
-                    if separator and name.lower() == "host":
-                        destination = value.strip()[:253]
-                        break
-            _record_sinkhole_event(_event(
-                "network",
-                "sinkhole-connect" if tls else "sinkhole-request",
-                0,
-                target=target,
-                destination=destination,
-                labels=labels,
-            ))
-            if not tls:
-                try:  # noqa: SIM105 -- this file is copied into a minimal guest image.
-                    connection.sendall(b"HTTP/1.1 204 No Content\r\nConnection: close\r\n\r\n")
-                except OSError:
-                    pass
+            target = "http-request"
+            method = ""
+            text = payload.decode("iso-8859-1", errors="replace")
+            lines = text.splitlines()
+            if lines:
+                parts = lines[0].split()
+                if len(parts) >= 2:
+                    method = parts[0]
+                    target = parts[1][:2048]
+            for line in lines[1:]:
+                name, separator, value = line.partition(":")
+                if separator and name.lower() == "host":
+                    destination = value.strip()[:253]
+                    break
+            matched = bool(
+                response
+                and destination.lower()
+                in {
+                    response["host"],
+                    f"{response['host']}:{443 if tls else 80}",
+                }
+                and method == response["method"]
+                and target == response["path"]
+            )
+            if matched:
+                labels.extend(["fixed-response", "route-match"])
+            elif response:
+                labels.append("route-miss")
+            _record_sinkhole_event(
+                _event(
+                    "network",
+                    "sinkhole-request",
+                    0,
+                    target=target,
+                    destination=destination,
+                    labels=labels,
+                )
+            )
+            if matched:
+                body = _verified_json_body(response, label="sinkhole HTTP response")
+                status = b"HTTP/1.1 200 OK"
+            elif response:
+                body = b"{}"
+                status = b"HTTP/1.1 404 Not Found"
+            else:
+                body = b""
+                status = b"HTTP/1.1 204 No Content"
+            headers = (
+                status
+                + b"\r\nContent-Type: application/json\r\nContent-Length: "
+                + str(len(body)).encode("ascii")
+                + b"\r\nConnection: close\r\n\r\n"
+            )
+            with contextlib.suppress(OSError):
+                connection.sendall(headers + body)
 
 
-def _start_loopback_sinkhole(plan: dict) -> None:
+def _start_loopback_sinkhole(plan: dict, environment: dict[str, str]) -> None:
     if plan["execution"]["network_policy"] != "loopback-sinkhole":
         return
     resolver = Path("/etc/resolv.conf")
     if resolver.is_symlink():
         resolver.unlink()
     resolver.write_text("nameserver 127.0.0.1\noptions attempts:1 timeout:1\n", encoding="ascii")
+    response = plan["execution"]["containment"]["sinkhole_http_response"]
+    tls_context = None
+    if response is not None:
+        _verified_json_body(response, label="sinkhole HTTP response")
+        tls_context, certificate = _create_tls_context(response["host"])
+        environment.update(
+            {
+                "CURL_CA_BUNDLE": str(certificate),
+                "NODE_EXTRA_CA_CERTS": str(certificate),
+                "REQUESTS_CA_BUNDLE": str(certificate),
+                "SSL_CERT_FILE": str(certificate),
+            }
+        )
     listeners = []
     udp = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     udp.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -283,7 +520,17 @@ def _start_loopback_sinkhole(plan: dict) -> None:
         tcp.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         tcp.bind(("127.0.0.1", port))
         tcp.listen(16)
-        listeners.append((tcp, _http_sinkhole, {"tls": tls}))
+        listeners.append(
+            (
+                tcp,
+                _http_sinkhole,
+                {
+                    "tls": tls,
+                    "tls_context": tls_context if tls else None,
+                    "response": response,
+                },
+            )
+        )
     for listener, target, kwargs in listeners:
         threading.Thread(target=target, args=(listener,), kwargs=kwargs, daemon=True).start()
 
@@ -365,7 +612,10 @@ def _run(plan: dict, argv: list[str], environment: dict[str, str]) -> tuple[str,
                 status = "timeout"
                 break
             trace_bytes = sum(path.stat().st_size for path in TRACE_DIR.glob("strace.*"))
-            if trace_bytes > MAX_STRACE_BYTES or output.stat().st_size > MAX_CANDIDATE_OUTPUT_BYTES:
+            if (
+                trace_bytes >= MAX_STRACE_BYTES
+                or output.stat().st_size >= MAX_CANDIDATE_OUTPUT_BYTES
+            ):
                 status = "resource-limit"
                 break
             time.sleep(0.1)
@@ -373,6 +623,11 @@ def _run(plan: dict, argv: list[str], environment: dict[str, str]) -> tuple[str,
             os.killpg(process.pid, signal.SIGKILL)
             process.wait(timeout=10)
             return status, _hash(output)
+        if (
+            sum(path.stat().st_size for path in TRACE_DIR.glob("strace.*")) >= MAX_STRACE_BYTES
+            or output.stat().st_size >= MAX_CANDIDATE_OUTPUT_BYTES
+        ):
+            return "resource-limit", _hash(output)
         return f"exit-{process.returncode}", _hash(output)
 
 
@@ -437,18 +692,45 @@ def _parse_events() -> list[dict]:
             quoted = re.findall(r'"([^"\\]*(?:\\.[^"\\]*)*)"', call)
             target = quoted[0][:4096] if quoted else None
             if call.startswith(("execve(", "execveat(")) and success:
-                events.append(_event(
-                    "process", "exec", pid, timestamp=timestamp,
-                    parent_process_id=parents.get(pid), process=target, command=call[:4096],
-                ))
+                events.append(
+                    _event(
+                        "process",
+                        "exec",
+                        pid,
+                        timestamp=timestamp,
+                        parent_process_id=parents.get(pid),
+                        process=target,
+                        command=call[:4096],
+                    )
+                )
+                if target and target.startswith(f"{SHIM_DIR}/"):
+                    shim_name = Path(target).name
+                    if shim_name == "crontab" or (shim_name == "openclaw" and '"cron"' in call):
+                        events.append(
+                            _event(
+                                "persistence",
+                                "inert-command-intercept",
+                                pid,
+                                timestamp=timestamp,
+                                parent_process_id=parents.get(pid),
+                                target=shim_name,
+                                labels=["inert-shim", "no-side-effect"],
+                            )
+                        )
             elif call.startswith("connect("):
                 event_type = _connect_event_type(call)
                 if event_type is not None:
-                    events.append(_event(
-                        event_type, "connect", pid, timestamp=timestamp,
-                        parent_process_id=parents.get(pid), success=success,
-                        destination=call[:4096],
-                    ))
+                    events.append(
+                        _event(
+                            event_type,
+                            "connect",
+                            pid,
+                            timestamp=timestamp,
+                            parent_process_id=parents.get(pid),
+                            success=success,
+                            destination=call[:4096],
+                        )
+                    )
             elif (
                 target
                 and call.startswith(("open(", "openat(", "openat2("))
@@ -456,23 +738,31 @@ def _parse_events() -> list[dict]:
                 and any(marker in target for marker in sensitive)
                 and success
             ):
-                events.append(_event(
-                    "credential", "read", pid, timestamp=timestamp,
-                    parent_process_id=parents.get(pid), target=target,
-                ))
-            elif (
-                target
-                and any(flag in call for flag in ("O_WRONLY", "O_RDWR", "O_CREAT"))
-            ):
-                event_type = (
-                    "persistence"
-                    if any(marker in target for marker in persistence)
-                    else "file"
+                events.append(
+                    _event(
+                        "credential",
+                        "read",
+                        pid,
+                        timestamp=timestamp,
+                        parent_process_id=parents.get(pid),
+                        target=target,
+                    )
                 )
-                events.append(_event(
-                    event_type, "write", pid, timestamp=timestamp,
-                    parent_process_id=parents.get(pid), success=success, target=target,
-                ))
+            elif target and any(flag in call for flag in ("O_WRONLY", "O_RDWR", "O_CREAT")):
+                event_type = (
+                    "persistence" if any(marker in target for marker in persistence) else "file"
+                )
+                events.append(
+                    _event(
+                        event_type,
+                        "write",
+                        pid,
+                        timestamp=timestamp,
+                        parent_process_id=parents.get(pid),
+                        success=success,
+                        target=target,
+                    )
+                )
     with _SINKHOLE_LOCK:
         events.extend(_SINKHOLE_EVENTS[: max(0, MAX_EVENTS - len(events))])
     return events
@@ -511,7 +801,11 @@ def main() -> None:
         _copy_candidate(plan)
         _validate_guest_contract(plan)
         environment = _synthetic_home(plan)
-        _start_loopback_sinkhole(plan)
+        home = Path(environment["HOME"])
+        _stage_openclaw_layout(plan, home)
+        _stage_synthetic_json(plan, home)
+        _install_inert_shims(plan, environment)
+        _start_loopback_sinkhole(plan, environment)
         exit_status, output_sha256 = _run(plan, _argv(plan), environment)
         events = _parse_events()
     except Exception as exc:  # Guest errors must still produce a bounded receipt.
@@ -568,14 +862,10 @@ def main() -> None:
                 plan.get("execution", {}).get("campaign_id") if "plan" in locals() else None
             ),
             "specimen_class": (
-                plan.get("execution", {}).get("specimen_class")
-                if "plan" in locals()
-                else None
+                plan.get("execution", {}).get("specimen_class") if "plan" in locals() else None
             ),
             "host_policy_sha256": (
-                plan.get("execution", {}).get("host_policy_sha256")
-                if "plan" in locals()
-                else None
+                plan.get("execution", {}).get("host_policy_sha256") if "plan" in locals() else None
             ),
         },
     }
