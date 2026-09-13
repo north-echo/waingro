@@ -38,10 +38,9 @@ def _file_has_exfil_sink(skill: ParsedSkill, fpath) -> bool:
     if fpath.name == "SKILL.md":
         haystack = skill.body
     else:
-        haystack = next(
-            (bf.content for bf in skill.bundled_content if str(bf.path) == name), ""
-        )
+        haystack = next((bf.content for bf in skill.bundled_content if str(bf.path) == name), "")
     return bool(_EXFIL_SINK.search(haystack))
+
 
 @register_rule
 class CredentialFileAccess(Rule):
@@ -90,7 +89,11 @@ class CredentialFileAccess(Rule):
     )
 
     def _get_nearby_lines(
-        self, skill: ParsedSkill, fpath: Path, line_num: int, window: int = 5,
+        self,
+        skill: ParsedSkill,
+        fpath: Path,
+        line_num: int,
+        window: int = 5,
     ) -> str:
         """Get text from +/-window lines around a match for context checking."""
         if fpath.name == "SKILL.md":
@@ -130,26 +133,30 @@ class CredentialFileAccess(Rule):
                 context = self._get_nearby_lines(skill, fpath, line_num, window=5)
                 if self._api_doc_re.search(context):
                     continue
-            findings.append(Finding(
-                rule_id=self.rule_id,
-                title=self.title,
-                description=self.description,
-                severity=Severity.MEDIUM,
-                category=FindingCategory.EXFILTRATION,
-                file_path=fpath,
-                line_number=line_num,
-                matched_content=matched[:200],
-                remediation=(
-                    "Verify whether the reference performs a read. Correlate any read "
-                    "with execution or egress before treating it as an attack."
-                ),
-                reference="Bitdefender -- credential exfiltration skills scanning for key files",
-                confidence=0.55,
-                context_note=(
-                    "A path or credential marker is a capability primitive, not proof "
-                    "that the skill reads or transmits a credential."
-                ),
-            ))
+            findings.append(
+                Finding(
+                    rule_id=self.rule_id,
+                    title=self.title,
+                    description=self.description,
+                    severity=Severity.MEDIUM,
+                    category=FindingCategory.EXFILTRATION,
+                    file_path=fpath,
+                    line_number=line_num,
+                    matched_content=matched[:200],
+                    remediation=(
+                        "Verify whether the reference performs a read. Correlate any read "
+                        "with execution or egress before treating it as an attack."
+                    ),
+                    reference=(
+                        "Bitdefender -- credential exfiltration skills scanning for key files"
+                    ),
+                    confidence=0.55,
+                    context_note=(
+                        "A path or credential marker is a capability primitive, not proof "
+                        "that the skill reads or transmits a credential."
+                    ),
+                )
+            )
         return findings
 
 
@@ -168,18 +175,20 @@ class KeychainAccess(Rule):
     def evaluate(self, skill: ParsedSkill) -> list[Finding]:
         findings = []
         for matched, line, fpath in search_skill_content(skill, self._patterns):
-            findings.append(Finding(
-                rule_id=self.rule_id,
-                title=self.title,
-                description=self.description,
-                severity=Severity.CRITICAL,
-                category=FindingCategory.EXFILTRATION,
-                file_path=fpath,
-                line_number=line,
-                matched_content=matched[:200],
-                remediation="Skills must not access the macOS Keychain.",
-                reference=None,
-            ))
+            findings.append(
+                Finding(
+                    rule_id=self.rule_id,
+                    title=self.title,
+                    description=self.description,
+                    severity=Severity.CRITICAL,
+                    category=FindingCategory.EXFILTRATION,
+                    file_path=fpath,
+                    line_number=line,
+                    matched_content=matched[:200],
+                    remediation="Skills must not access the macOS Keychain.",
+                    reference=None,
+                )
+            )
         return findings
 
 
@@ -200,18 +209,20 @@ class BrowserCredentialAccess(Rule):
     def evaluate(self, skill: ParsedSkill) -> list[Finding]:
         findings = []
         for matched, line, fpath in search_skill_content(skill, self._patterns):
-            findings.append(Finding(
-                rule_id=self.rule_id,
-                title=self.title,
-                description=self.description,
-                severity=Severity.HIGH,
-                category=FindingCategory.EXFILTRATION,
-                file_path=fpath,
-                line_number=line,
-                matched_content=matched[:200],
-                remediation="Skills should not access browser credential stores.",
-                reference=None,
-            ))
+            findings.append(
+                Finding(
+                    rule_id=self.rule_id,
+                    title=self.title,
+                    description=self.description,
+                    severity=Severity.HIGH,
+                    category=FindingCategory.EXFILTRATION,
+                    file_path=fpath,
+                    line_number=line,
+                    matched_content=matched[:200],
+                    remediation="Skills should not access browser credential stores.",
+                    reference=None,
+                )
+            )
         return findings
 
 
@@ -233,24 +244,29 @@ class OpenClawWorkspaceScraping(Rule):
         findings = []
         for matched, line, fpath in search_skill_content(skill, self._patterns):
             has_sink = _file_has_exfil_sink(skill, fpath)
-            findings.append(Finding(
-                rule_id=self.rule_id,
-                title=self.title,
-                description=self.description,
-                severity=Severity.HIGH if has_sink else Severity.LOW,
-                category=FindingCategory.EXFILTRATION,
-                file_path=fpath,
-                line_number=line,
-                matched_content=matched[:200],
-                remediation="Skills should not access OpenClaw memory or workspace directories.",
-                reference="Bitdefender -- skills scanning OpenClaw memory/workspace dirs",
-                confidence=0.9 if has_sink else 0.25,
-                context_note=(
-                    None if has_sink else
-                    "Workspace path with no outbound destination in the same file. "
-                    "Most skills legitimately store their own files here."
-                ),
-            ))
+            findings.append(
+                Finding(
+                    rule_id=self.rule_id,
+                    title=self.title,
+                    description=self.description,
+                    severity=Severity.HIGH if has_sink else Severity.LOW,
+                    category=FindingCategory.EXFILTRATION,
+                    file_path=fpath,
+                    line_number=line,
+                    matched_content=matched[:200],
+                    remediation=(
+                        "Skills should not access OpenClaw memory or workspace directories."
+                    ),
+                    reference="Bitdefender -- skills scanning OpenClaw memory/workspace dirs",
+                    confidence=0.9 if has_sink else 0.25,
+                    context_note=(
+                        None
+                        if has_sink
+                        else "Workspace path with no outbound destination in the same file. "
+                        "Most skills legitimately store their own files here."
+                    ),
+                )
+            )
         return findings
 
 
@@ -270,18 +286,20 @@ class EnvVariableHarvesting(Rule):
     def evaluate(self, skill: ParsedSkill) -> list[Finding]:
         findings = []
         for matched, line, fpath in search_skill_content(skill, self._patterns):
-            findings.append(Finding(
-                rule_id=self.rule_id,
-                title=self.title,
-                description=self.description,
-                severity=Severity.HIGH,
-                category=FindingCategory.EXFILTRATION,
-                file_path=fpath,
-                line_number=line,
-                matched_content=matched[:200],
-                remediation="Skills should not harvest secrets from environment variables.",
-                reference=None,
-            ))
+            findings.append(
+                Finding(
+                    rule_id=self.rule_id,
+                    title=self.title,
+                    description=self.description,
+                    severity=Severity.HIGH,
+                    category=FindingCategory.EXFILTRATION,
+                    file_path=fpath,
+                    line_number=line,
+                    matched_content=matched[:200],
+                    remediation="Skills should not harvest secrets from environment variables.",
+                    reference=None,
+                )
+            )
         return findings
 
 
@@ -337,25 +355,28 @@ class EmbeddedCredentialPatterns(Rule):
                 continue
             seen.add((fpath, line))
             fingerprint = hashlib.sha256(value.encode("utf-8")).hexdigest()[:12]
-            findings.append(Finding(
-                rule_id=self.rule_id,
-                title=self.title,
-                description=self.description,
-                severity=Severity.HIGH,
-                category=FindingCategory.EXFILTRATION,
-                file_path=fpath,
-                line_number=line,
-                matched_content=(
-                    f"<redacted credential: sha256={fingerprint} length={len(value)}>"
-                ),
-                remediation="Skills must not contain hardcoded credentials or API keys.",
-                reference=None,
-                confidence=0.85,
-                context_note=(
-                    "The credential value is redacted from scanner output. Hard-coding is "
-                    "a secret-exposure risk, but does not independently establish malicious intent."
-                ),
-            ))
+            findings.append(
+                Finding(
+                    rule_id=self.rule_id,
+                    title=self.title,
+                    description=self.description,
+                    severity=Severity.HIGH,
+                    category=FindingCategory.EXFILTRATION,
+                    file_path=fpath,
+                    line_number=line,
+                    matched_content=(
+                        f"<redacted credential: sha256={fingerprint} length={len(value)}>"
+                    ),
+                    remediation="Skills must not contain hardcoded credentials or API keys.",
+                    reference=None,
+                    confidence=0.85,
+                    context_note=(
+                        "The credential value is redacted from scanner output. Hard-coding is "
+                        "a secret-exposure risk, but does not independently establish "
+                        "malicious intent."
+                    ),
+                )
+            )
         return findings
 
 
@@ -377,18 +398,20 @@ class ClipboardMonitoring(Rule):
     def evaluate(self, skill: ParsedSkill) -> list[Finding]:
         findings = []
         for matched, line, fpath in search_skill_content(skill, self._patterns):
-            findings.append(Finding(
-                rule_id=self.rule_id,
-                title=self.title,
-                description=self.description,
-                severity=Severity.HIGH,
-                category=FindingCategory.EXFILTRATION,
-                file_path=fpath,
-                line_number=line,
-                matched_content=matched[:200],
-                remediation="Skills should not monitor or access clipboard contents.",
-                reference=None,
-            ))
+            findings.append(
+                Finding(
+                    rule_id=self.rule_id,
+                    title=self.title,
+                    description=self.description,
+                    severity=Severity.HIGH,
+                    category=FindingCategory.EXFILTRATION,
+                    file_path=fpath,
+                    line_number=line,
+                    matched_content=matched[:200],
+                    remediation="Skills should not monitor or access clipboard contents.",
+                    reference=None,
+                )
+            )
         return findings
 
 
@@ -456,9 +479,7 @@ class SensitiveDataToNetwork(Rule):
             ordered_scope = scope_from_finding(skill, fpath, line)
             statement = statement_for_finding(skill, fpath, line)
             instructed_flow = bool(
-                fpath.name == "SKILL.md"
-                and statement
-                and _AGENT_EGRESS_RE.search(statement)
+                fpath.name == "SKILL.md" and statement and _AGENT_EGRESS_RE.search(statement)
             )
             read = _LOCAL_READ_RE.search(ordered_scope)
             egress = _ACTIVE_EGRESS_RE.search(ordered_scope)
@@ -593,8 +614,7 @@ def _provider_is_disclosed(skill: ParsedSkill, statement: str, matched: str) -> 
     if len(token) >= 4 and token in declared:
         return True
     return any(
-        token in re.sub(r"[^a-z0-9]", "", host.lower())
-        for host in _URL_HOST_RE.findall(statement)
+        token in re.sub(r"[^a-z0-9]", "", host.lower()) for host in _URL_HOST_RE.findall(statement)
     )
 
 
@@ -607,9 +627,7 @@ def _provider_mismatch_is_evident(statement: str, matched: str) -> bool:
     if not expected or not hosts:
         return False
     return not any(
-        host == domain or host.endswith(f".{domain}")
-        for host in hosts
-        for domain in expected
+        host == domain or host.endswith(f".{domain}") for host in hosts for domain in expected
     )
 
 
@@ -708,9 +726,7 @@ class BulkSensitiveEnvironmentAccess(Rule):
         for (fpath, _scope), hits in grouped.items():
             reads_all = any(re.search(r"\bdict\s*\(\s*os\.environ", hit) for hit, _ in hits)
             names = {
-                match.group(0)
-                for hit, _line in hits
-                if (match := _SECRET_NAME_RE.search(hit))
+                match.group(0) for hit, _line in hits if (match := _SECRET_NAME_RE.search(hit))
             }
             if not reads_all and len(names) < 2:
                 continue

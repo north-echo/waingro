@@ -253,8 +253,7 @@ def _statement_bounds(lines: list[str], index: int) -> tuple[int, int]:
         # closed yet at the finding line.  Crossing that boundary can join a
         # sink from an earlier function or branch to an unrelated source.
         if start < index and (
-            not lines[candidate].strip()
-            or lines[candidate].rstrip().endswith(":")
+            not lines[candidate].strip() or lines[candidate].rstrip().endswith(":")
         ):
             break
         prefix = "\n".join(lines[candidate : index + 1])
@@ -516,9 +515,7 @@ def _source_is_inside_sink(
         [match for match in sink_pattern.finditer(clause) if match.start() < source_pos]
         if allow_quoted_source
         else [
-            match
-            for match in _unquoted_matches(sink_pattern, clause)
-            if match.start() < source_pos
+            match for match in _unquoted_matches(sink_pattern, clause) if match.start() < source_pos
         ]
     )
     if not sink_matches:
@@ -528,9 +525,9 @@ def _source_is_inside_sink(
     # Call-shaped sinks must have an opening delimiter that has not closed
     # before the source. Shell and PowerShell command sinks are deliberately
     # delimiter-free, but still require the value to follow the sink.
-    if (
-        allow_quoted_source or not _is_quoted(clause, source_pos)
-    ) and between.count("(") > between.count(")"):
+    if (allow_quoted_source or not _is_quoted(clause, source_pos)) and between.count(
+        "("
+    ) > between.count(")"):
         return True
     if re.match(
         r"(?:curl\b|gog\s+gmail\s+send\b|sendmail\b|mail\s+-s\b)",
