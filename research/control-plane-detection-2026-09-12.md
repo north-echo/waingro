@@ -2,6 +2,7 @@
 
 Author: Christopher Lusk, North Echo
 Date: 2026-09-12
+Updated: 2026-09-13
 
 ## Outcome
 
@@ -19,7 +20,8 @@ would not be sufficient attribution evidence.
 
 No candidate was imported, installed, transferred, or executed. No dependency,
 candidate endpoint, report endpoint, publisher, or ClawHub reporting action was
-contacted. Hanna2 was not accessed or modified.
+contacted. Hanna2 was subsequently accessed for a verified backup and restore
+drill only; no control or candidate was executed.
 
 ## Detection model
 
@@ -107,7 +109,7 @@ It is deliberately incapable of authorizing a run:
 Evidence identities:
 
 - Case SHA-256:
-  `26bf61ca0d215683f544358d32742cfda51de59d081ef15112262381a4783bea`
+  `5d13e97058dc3dc6d6844d6b2fa5da2fa8a5c0165e7cd7d60bf257d6f8330310`
 - Synthetic heartbeat fixture SHA-256:
   `c946b9c2cbc06d0725f7c0aa46c7834cd1771db903d9aba60a6044c161fdfd64`
 - Synthetic configuration fixture SHA-256:
@@ -117,8 +119,8 @@ The generic loopback response, OpenClaw layout, synthetic JSON, and inert shim
 components were subsequently implemented and locally unit-tested in WAINGRO
 0.11.0. The dossier remains blocked because the benign suite has not run on
 hanna2, the base image has not proved that real shim targets are absent, and the
-backup, restore, rebuild, and containment-control sequence has not been
-recorded complete.
+verified backup disk has not been disconnected. The trusted rebuild and
+containment-control sequence are not complete.
 
 ## Interpretation and next gate
 
@@ -128,10 +130,11 @@ capture as a whole. It is not proof that the remote service ever returned a
 harmful task. Static text establishes the client-side authority path but cannot
 observe server behavior, conditional activation, or operator intent.
 
-The next safe step is to preserve and rebuild hanna2, freeze the base image and
-host policy, then run the independently digest-pinned benign controls. Any
-proposal to transfer or execute the corpus artifact still requires a separate
-review and explicit authorization after that restoration and containment
+The next safe step is to power down hanna2, physically disconnect its verified
+`/data` backup disk, and rebuild the NVMe host from trusted media. Afterward,
+freeze the base image and host policy, then run the independently digest-pinned
+benign controls. Any proposal to transfer or execute the corpus artifact still
+requires a separate review and explicit authorization after that containment
 evidence is complete.
 
 Assisted by Claude Code

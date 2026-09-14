@@ -100,6 +100,7 @@
     "No entrypoint has been selected or authorized.",
     "The containment profile has not passed the complete benign control suite on hanna2.",
     "The base image has not proven that real openclaw and crontab executables are absent before shims are installed.",
-    "The hanna2 backup, restore drill, clean rebuild, and containment-control suite are not recorded as complete."
+    "The verified backup disk is still mounted and has not been physically disconnected.",
+    "The trusted hanna2 rebuild and containment-control suite are not complete."
   ]
 }

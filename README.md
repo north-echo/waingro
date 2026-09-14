@@ -380,8 +380,9 @@ malicious attribution. See the
 
 WAINGRO 0.11.0 implements the generic containment profile and non-authorizing
 benign control catalog needed for the next safety gate. This is preparation,
-not dynamic evidence: hanna2 remains untouched and ClawGrid execution remains
-blocked. See the
+not candidate evidence: hanna2 now has a verified pre-rebuild backup and
+temporary-LV restore drill, but its backup disk is not yet disconnected, the
+clean rebuild has not begun, and ClawGrid execution remains blocked. See the
 [containment readiness report](research/containment-readiness-2026-09-12.md).
 
 ## Threat-intelligence model

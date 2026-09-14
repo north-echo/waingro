@@ -2,6 +2,7 @@
 
 Author: Christopher Lusk, North Echo
 Date: 2026-09-12
+Updated: 2026-09-13
 
 ## Outcome
 
@@ -12,7 +13,8 @@ result, not runtime evidence about any ClawHub artifact.
 
 No corpus candidate was imported, installed, transferred, or executed. No
 candidate, publisher, dependency, report, or ClawHub endpoint was contacted.
-No report was filed. Hanna2 was not accessed or modified.
+No report was filed. Hanna2 was later accessed only for the preservation gate
+described below; no control or candidate was executed.
 
 ## Implemented containment profile
 
@@ -56,21 +58,52 @@ fixture.
 Evidence identities:
 
 - Control suite SHA-256:
-  `1a0df3bc2d67acfda95770657212d06bacbd2de47d6c4dd2c926dd3f19b189df`
+  `83eb263c5d06ae28b215bb1ccfe46f7331607e7f399fc7fc08ea7245cee49e9d`
 - ClawGrid case SHA-256:
-  `26bf61ca0d215683f544358d32742cfda51de59d081ef15112262381a4783bea`
+  `5d13e97058dc3dc6d6844d6b2fa5da2fa8a5c0165e7cd7d60bf257d6f8330310`
 - ClawGrid heartbeat response SHA-256:
   `c946b9c2cbc06d0725f7c0aa46c7834cd1771db903d9aba60a6044c161fdfd64`
 - ClawGrid synthetic configuration SHA-256:
   `a3fe0c6cbe1c2b9afc3ca85f59501b3489cb85e2fe0f048f7aaf63211d03db1b`
 
+## Hanna2 preservation gate
+
+On 2026-09-13, both the root NVMe and separate SATA `/data` device reported a
+passing SMART health assessment with no reported media or data-integrity
+errors. The root XFS filesystem was captured from a 32 GiB LVM snapshot to the
+separate `/dev/sda` disk. The dump reported success after processing about 105
+GiB, compressed to a 53 GiB archive. Both compressed streams and every entry in
+the backup SHA-256 manifest verified before the output was promoted from its
+`.partial` name.
+
+An initial attempt failed closed before producing a usable root dump because
+Fedora 43 requires stdout as a standalone `xfsdump` operand. Its snapshot and
+mount were removed, the 430 MiB failure directory was retained, and the command
+was corrected and covered by a static regression assertion before the
+successful attempt.
+
+The root dump SHA-256 is
+`a708caa1dab4bc2ec8861fb8d6b23edd3e1d111669563490ddfcaf3ff0cc1d61`.
+A restore drill then reverified the manifest, restored the root dump into a new
+200 GiB temporary LV, matched three snapshot-pinned root-file hashes, extracted
+the boot archive, and removed the temporary mount and LV. The restore receipt
+SHA-256 is
+`6391fb2e3d658e46779c41e2fc719c626b7c628121e52089c29afbcae51bfb79`.
+
+Six ephemeral container attach sockets with overlong paths were discarded by
+`xfsrestore`; it reported no regular-file restore error and completed with
+success. The drill tests dump readability and selected file integrity. It does
+not test bootability from independently restored media, and `/data` is the only
+copy of its own pre-existing contents. The evidence summary is digest
+`ae461d74f76d5807fa59333843616dee099e7f636fd356e0905746330d89f8cc`.
+
 ## Remaining gate
 
 The benign catalog has not run on hanna2. Before any remote control execution,
-the machine still needs physically separate offline backup media, a successful
-spare-disk restore drill, a trusted clean rebuild, a frozen and digest-pinned
-base image and host policy, and complete benign-control receipts. The offline
-backup and `/data` media must be physically disconnected during testing.
+the verified `/data` disk must be physically disconnected, hanna2 must receive
+a trusted clean rebuild, and its base image and host policy must be frozen and
+digest-pinned before complete benign-control receipts are collected. A future
+post-campaign restore should use the preserved disk only after testing ends.
 
 Only after those controls pass should a separate review consider selecting one
 ClawGrid entrypoint. That review would still need to explicitly authorize host

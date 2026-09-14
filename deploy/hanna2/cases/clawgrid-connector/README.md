@@ -30,6 +30,11 @@ host, SNI name, `POST` method, path, content digest, and size. The guest first
 proves that no real executable exists for either shim name. None of these
 components has yet been validated on hanna2.
 
+The pre-rebuild root backup and a temporary-LV restore drill completed on
+2026-09-13. This does not validate containment: the backup disk must still be
+physically disconnected, hanna2 rebuilt from trusted media, and every benign
+control passed before candidate transfer can be considered.
+
 Validate the complete, non-authorizing benign control catalog locally:
 
 ```bash

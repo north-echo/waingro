@@ -31,6 +31,11 @@ execute a skill, and a high-priority queue item is not evidence of malware.
    LVM metadata, configuration inventories, SHA-256 manifest, and compressed
    stream validation. The destination must be disconnected before testing.
 2. Test restoration onto spare storage before relying on the backup.
+   `restore-drill.sh` verifies every backup digest, restores the root dump into
+   a newly created 200 GiB temporary LV, checks pinned root files, extracts the
+   boot archive, records a receipt on the backup disk, and removes only that
+   uniquely named temporary LV. This tests the dump, not whether the host can
+   boot from independently restored media.
 3. Reinstall hanna2 from trusted media. Do not treat deletion of its existing
    VMs as a clean slate.
 4. Back up any filesystem not covered by the root XFS snapshot separately.

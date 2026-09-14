@@ -27,12 +27,29 @@ if [[ ${DEST_SOURCE} != /dev/* ]]; then
     exit 77
 fi
 
-for command in xfsdump xfsrestore zstd sha256sum sfdisk vgcfgbackup lvcreate lvremove; do
+for command in \
+    awk cut date df efibootmgr findmnt firewall-cmd hostname install lsblk \
+    lvcreate lvremove mount mv readlink rmdir rpm sfdisk sha256sum smartctl \
+    sort sync systemctl tar tr umount vgcfgbackup xfsdump xfsrestore zstd; do
     if ! command -v "${command}" >/dev/null; then
         /usr/bin/printf 'missing required command: %s\n' "${command}" >&2
         exit 69
     fi
 done
+
+ROOT_FSTYPE=$(/usr/bin/findmnt -n -o FSTYPE --target /)
+if [[ ${ROOT_SOURCE} != /dev/mapper/fedora-root || ${ROOT_FSTYPE} != xfs ]]; then
+    /usr/bin/printf 'root must be XFS on /dev/mapper/fedora-root\n' >&2
+    exit 77
+fi
+ROOT_DISK=$(/usr/bin/lsblk -srno PATH,TYPE "${ROOT_SOURCE}" \
+    | /usr/bin/awk '$2 == "disk" {print $1; exit}')
+DEST_DISK=$(/usr/bin/lsblk -srno PATH,TYPE "${DEST_SOURCE}" \
+    | /usr/bin/awk '$2 == "disk" {print $1; exit}')
+if [[ -z ${ROOT_DISK} || -z ${DEST_DISK} || ${ROOT_DISK} == "${DEST_DISK}" ]]; then
+    /usr/bin/printf 'backup destination must be on a different physical disk\n' >&2
+    exit 77
+fi
 
 AVAILABLE=$(/usr/bin/df --output=avail -B1 "${DESTINATION}" | /usr/bin/tail -1 | /usr/bin/tr -d ' ')
 if (( AVAILABLE < 161061273600 )); then
@@ -62,13 +79,20 @@ trap cleanup EXIT INT TERM
 /usr/sbin/vgcfgbackup -f "${PARTIAL}/fedora.vgcfg" fedora
 /usr/bin/efibootmgr -v >"${PARTIAL}/efibootmgr.txt"
 /usr/bin/lsblk -e7 -O --json >"${PARTIAL}/lsblk.json"
+/usr/sbin/smartctl -a "${ROOT_DISK}" >"${PARTIAL}/root-disk-smart.txt"
+/usr/sbin/smartctl -a "${DEST_DISK}" >"${PARTIAL}/destination-disk-smart.txt"
 /usr/bin/rpm -qa --qf '%{NAME}\t%{EPOCHNUM}:%{VERSION}-%{RELEASE}\t%{ARCH}\n' \
     | /usr/bin/sort >"${PARTIAL}/packages.tsv"
 /usr/bin/systemctl list-unit-files --no-pager >"${PARTIAL}/systemd-unit-files.txt"
 /usr/bin/firewall-cmd --list-all-zones >"${PARTIAL}/firewalld-zones.txt"
+(
+    cd "${MOUNTPOINT}"
+    /usr/bin/sha256sum etc/fstab etc/os-release usr/bin/bash \
+        >"${PARTIAL}/root-verification-files.sha256"
+)
 /usr/bin/tar --acls --xattrs --selinux --numeric-owner -C /boot -cpf - . \
     | /usr/bin/zstd -T0 -19 -o "${PARTIAL}/boot.tar.zst"
-/usr/sbin/xfsdump -J -l 0 -f - "${MOUNTPOINT}" \
+/usr/sbin/xfsdump -J -l 0 - "${MOUNTPOINT}" \
     | /usr/bin/zstd -T0 -10 -o "${PARTIAL}/root.xfsdump.zst"
 
 /usr/bin/zstd -t "${PARTIAL}/boot.tar.zst" "${PARTIAL}/root.xfsdump.zst"

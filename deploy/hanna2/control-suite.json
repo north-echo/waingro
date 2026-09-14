@@ -122,7 +122,7 @@
   ],
   "blockers": [
     "The suite has not been transferred to or executed on a rebuilt hanna2 host.",
-    "Offline backup media and a successful spare-disk restore drill have not been recorded.",
+    "The verified backup disk has not been physically disconnected from hanna2.",
     "The hanna2 base image and host policy have not been frozen and digest-pinned for this suite."
   ]
 }

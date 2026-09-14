@@ -1,0 +1,35 @@
+{
+  "schema_version": "1.0",
+  "author": "Christopher Lusk, North Echo",
+  "host": "hanna2",
+  "date": "2026-09-13",
+  "backup": {
+    "path": "/data/waingro-backups/hanna2-pre-campaign-20260913T040901Z",
+    "physical_disk": "/dev/sda",
+    "root_disk": "/dev/nvme0n1",
+    "size_reported": "53G",
+    "root_xfsdump_sha256": "a708caa1dab4bc2ec8861fb8d6b23edd3e1d111669563490ddfcaf3ff0cc1d61",
+    "compressed_streams_verified": true,
+    "sha256_manifest_verified": true,
+    "physically_disconnected": false
+  },
+  "restore_drill": {
+    "receipt": "restore-drill-20260913T043534Z.txt",
+    "receipt_sha256": "6391fb2e3d658e46779c41e2fc719c626b7c628121e52089c29afbcae51bfb79",
+    "temporary_device": "/dev/fedora/waingro_restore_drill_20260913T043534Z",
+    "root_dump_restore": "verified",
+    "root_file_hashes": "verified",
+    "boot_archive_restore": "verified",
+    "temporary_device_removed": true
+  },
+  "limitations": [
+    "An initial backup attempt failed closed at Fedora xfsdump argument parsing; its snapshot and mount were removed and the 430M failure directory was retained.",
+    "The restore drill used a temporary LV on the root NVMe rather than an independent spare disk.",
+    "Six ephemeral container attach sockets with overlong paths were discarded by xfsrestore; no regular-file restore error was reported.",
+    "The RPM inventory skipped one malformed legacy DSA package-header signature while its SHA-256 and SHA-1 header digests were reported valid.",
+    "Bootability from independently restored media has not been tested."
+  ],
+  "candidate_transferred": false,
+  "candidate_executed": false,
+  "assistance": "Assisted by Claude Code"
+}
