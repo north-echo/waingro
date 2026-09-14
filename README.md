@@ -140,7 +140,8 @@ and negative behavior, sinkhole DNS/HTTPS, inert command interception, timeout,
 output limiting, resource-policy rejection, missing capabilities, plan/image
 tampering, trace trust, before/after posture, and guest cleanup. The full suite
 passed on the dedicated hanna2 host on September 14, 2026. No corpus candidate
-was transferred or executed; see the
+was transferred or executed. The guest controls were repeated after Secure Boot
+was enabled and produced the same expected outcomes; see the
 [hanna2 control-validation report](research/hanna2-control-validation-2026-09-14.md).
 
 The dedicated hanna2 lab now uses a clean Fedora Server 44 installation with

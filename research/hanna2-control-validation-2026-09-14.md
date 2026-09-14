@@ -91,6 +91,16 @@ because execution was truncated by the control being tested.
   flashing because firmware rejected the authenticated EFI-variable write.
   SELinux recorded no denial, and default-deny host egress was restored after
   each bounded maintenance window.
+- After enabling Secure Boot and deploying the machine-enforced preflight gate,
+  the benign canary, negative, DNS/HTTPS sinkhole, inert-command interception,
+  timeout, and output-volume controls were repeated. Their exit statuses, event
+  counts, and coverage results matched the table above. Resource-policy,
+  missing-executable, plan-identity, image-digest, and signed-trace tampering
+  were rejected as expected.
+- Post-run validation found no libvirt domains or transient job directories,
+  zero lost audit events, an unchanged base-image digest, and no AIDE
+  differences across 95,234 entries. Development-only files introduced during
+  deployment were removed before the integrity baseline was accepted.
 
 ## Remaining hard gates
 
