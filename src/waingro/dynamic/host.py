@@ -23,6 +23,7 @@ from pathlib import Path
 HOST_POLICY_SCHEMA = "1.0"
 DEFAULT_HOST_POLICY = Path("/etc/waingro/host-policy.json")
 DEFAULT_EGRESS_MARKER = Path("/run/waingro/egress-locked")
+DEFAULT_EFIVARS_ROOT = Path("/sys/firmware/efi/efivars")
 ALLOWED_NETWORK_POLICIES = frozenset({"none", "loopback-sinkhole"})
 ALLOWED_SPECIMEN_CLASSES = frozenset({"fixture", "corpus"})
 _DIGEST_RE = re.compile(r"^[0-9a-f]{64}$")
@@ -190,6 +191,24 @@ def _secure_marker(path: Path, policy_sha256: str) -> bool:
     )
 
 
+def _secure_boot_state(efivars_root: Path = DEFAULT_EFIVARS_ROOT) -> str:
+    """Read the UEFI SecureBoot variable without invoking privileged tooling."""
+    try:
+        variables = list(efivars_root.glob("SecureBoot-*"))
+        if len(variables) != 1:
+            return "unavailable"
+        payload = variables[0].read_bytes()
+    except OSError:
+        return "unavailable"
+    if len(payload) != 5:
+        return "invalid"
+    if payload[4] == 1:
+        return "enabled"
+    if payload[4] == 0:
+        return "disabled"
+    return "invalid"
+
+
 def inspect_host_posture(
     policy_path: Path = DEFAULT_HOST_POLICY,
     *,
@@ -251,6 +270,8 @@ def inspect_host_posture(
     enforce = Path("/sys/fs/selinux/enforce")
     selinux = enforce.read_text(encoding="ascii").strip() if enforce.is_file() else None
     checks["selinux_enforcing"] = {"ok": selinux == "1", "observed": selinux}
+    secure_boot = _secure_boot_state()
+    checks["secure_boot"] = {"ok": secure_boot == "enabled", "observed": secure_boot}
     checks["egress_lock"] = {
         "ok": _secure_marker(policy.egress_marker, policy.policy_sha256),
         "observed": str(policy.egress_marker),

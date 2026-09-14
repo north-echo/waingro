@@ -121,8 +121,7 @@
     }
   ],
   "blockers": [
-    "Required hanna2 UEFI key and revocation-database firmware updates remain pending.",
-    "Secure Boot remains disabled on hanna2.",
+    "Required hanna2 UEFI key and revocation-database updates remain pending because Lenovo firmware rejects runtime EFI-variable writes; complete them from firmware setup.",
     "No corpus campaign policy or artifact allowlist has been authorized."
   ]
 }

@@ -150,10 +150,12 @@ filesystems, and a digest-pinned Fedora 44 KVM base image. Host egress activatio
 uses a per-boot 120-second rollback timer: the containment marker is not trusted
 until the operator reconnects and explicitly commits it. Preflight also rejects
 a world-accessible KVM device, a missing IOMMU, or a lockdown marker that has
-not been committed; host provisioning separately rejects audit task
-suppression. Pending firmware updates and Secure Boot remain blocking gates;
-repeat the complete benign suite after both changes before any corpus
-execution.
+not been committed. It also machine-enforces Secure Boot instead of relying on
+an operator checklist; host provisioning separately rejects audit task
+suppression. Secure Boot was enabled and verified on September 14, 2026. The
+pending UEFI key and revocation-database updates remain blocking because Lenovo
+firmware rejects their authenticated runtime writes; complete them from
+firmware setup and repeat the complete benign suite before any corpus execution.
 
 ## Detection Coverage
 
@@ -395,8 +397,9 @@ WAINGRO 0.11.0 implements the generic containment profile and non-authorizing
 benign control catalog needed for the next safety gate. This is preparation,
 not candidate evidence: hanna2 has been rebuilt as a dedicated Fedora Server 44
 KVM host and its former data disk is physically disconnected. Candidate
-execution remains blocked until firmware and Secure Boot gates are complete and
-the benign controls pass again afterward. See the
+execution remains blocked until the remaining firmware gate is complete and the
+benign controls pass again afterward. Secure Boot is now enabled, while the
+firmware-database update remains blocked on a firmware-console operation. See the
 [containment readiness report](research/containment-readiness-2026-09-12.md).
 
 ## Threat-intelligence model

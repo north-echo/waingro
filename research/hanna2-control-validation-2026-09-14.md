@@ -12,6 +12,9 @@ No corpus artifact was transferred to or executed on hanna2.
 ## Final host baseline
 
 - Fedora Server 44, kernel `7.2.5-200.fc44.x86_64`.
+- Secure Boot was enabled and verified after the initial suite. Preflight now
+  reads the UEFI variable directly and fails closed when it is disabled,
+  malformed, duplicated, or unavailable.
 - SELinux enforcing; IOMMU enabled with 11 groups; `/dev/kvm` is
   `root:kvm 0660`.
 - Key-only, source-restricted SSH with TCP, agent, stream-local, X11, and tunnel
@@ -76,11 +79,25 @@ because execution was truncated by the control being tested.
   use direct `files dns` resolution against `127.0.0.1`, and the synthetic CA
   is traversable without exposing its private key.
 
+## September 14 maintenance follow-up
+
+- The EFI System Partition was archived twice before firmware maintenance; both
+  archives have separate SHA-256 manifests on hanna2.
+- Lenovo accepted and applied the Secure Boot setting remotely. Hanna2 rebooted
+  successfully through Fedora's signed shim, and `mokutil` reports Secure Boot
+  enabled.
+- Fresh trusted LVFS metadata identified high-urgency KEK, UEFI CA, and dbx
+  updates. Two attempts to stage the Lenovo-signed KEK payload failed before
+  flashing because firmware rejected the authenticated EFI-variable write.
+  SELinux recorded no denial, and default-deny host egress was restored after
+  each bounded maintenance window.
+
 ## Remaining hard gates
 
-- Apply the pending UEFI key and revocation-database firmware updates during a
-  supervised maintenance window.
-- Enable Secure Boot in firmware and repeat boot/posture validation.
+- Apply the pending UEFI key and revocation-database updates from Lenovo
+  firmware setup; do not disable SELinux or bypass authenticated-variable
+  protections to force the runtime update.
+- Repeat the full control suite after that firmware-console operation.
 - Keep the corpus policy disabled and the allowlist empty until a separate,
   artifact-specific campaign authorization is reviewed.
 - Before any corpus run, repeat the full benign suite after the firmware and

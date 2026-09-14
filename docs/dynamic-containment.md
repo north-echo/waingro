@@ -59,9 +59,10 @@ execute a skill, and a high-priority queue item is not evidence of malware.
 ## Phase 3: containment validation
 
 1. Confirm that `waingro dynamic preflight` passes as the dedicated
-   `waingro-runner` account. Preflight must reject a world-accessible KVM
-   device, missing IOMMU groups, or an uncommitted egress marker. Host
-   provisioning must separately reject audit task suppression.
+   `waingro-runner` account. Preflight must reject disabled or unreadable Secure
+   Boot state, a world-accessible KVM device, missing IOMMU groups, or an
+   uncommitted egress marker. Host provisioning must separately reject audit
+   task suppression.
 2. Run benign, positive, timeout, fork/resource, output-volume, DNS, HTTP, TLS,
    missing-executable, tampered-plan, tampered-image, and post-run posture
    controls.
