@@ -32,6 +32,8 @@ TRACE_DIR = Path("/run/waingro-trace")
 SHIM_DIR = Path("/run/waingro-shims")
 FIXTURE_DIR = Path("/run/waingro-fixtures")
 TLS_DIR = Path("/run/waingro-tls")
+NSSWITCH = Path("/etc/nsswitch.conf")
+RESOLVER = Path("/etc/resolv.conf")
 MAX_EVENTS = 100_000
 MAX_TRACE_BYTES = 20 * 1024 * 1024
 MAX_CANDIDATE_OUTPUT_BYTES = 8 * 1024 * 1024
@@ -345,7 +347,10 @@ def _receive_http_request(connection: socket.socket) -> bytes:
 
 
 def _create_tls_context(host: str, directory: Path = TLS_DIR) -> tuple[ssl.SSLContext, Path]:
-    directory.mkdir(mode=0o700, parents=True, exist_ok=False)
+    # The unprivileged candidate must traverse this directory to read the
+    # synthetic CA certificate.  It cannot list the directory, and the private
+    # key remains root-only.
+    directory.mkdir(mode=0o711, parents=True, exist_ok=False)
     key = directory / "server.key"
     certificate = directory / "server.crt"
     openssl = shutil.which("openssl", path="/usr/bin:/bin")
@@ -490,13 +495,25 @@ def _http_sinkhole(
                 connection.sendall(headers + body)
 
 
-def _start_loopback_sinkhole(plan: dict, environment: dict[str, str]) -> None:
-    if plan["execution"]["network_policy"] != "loopback-sinkhole":
-        return
-    resolver = Path("/etc/resolv.conf")
+def _use_direct_loopback_dns(
+    nsswitch: Path = NSSWITCH,
+    resolver: Path = RESOLVER,
+) -> None:
+    lines = nsswitch.read_text(encoding="utf-8").splitlines()
+    host_indexes = [index for index, line in enumerate(lines) if line.lstrip().startswith("hosts:")]
+    if len(host_indexes) != 1:
+        raise RuntimeError("guest nsswitch hosts policy is unavailable or ambiguous")
+    lines[host_indexes[0]] = "hosts: files dns"
+    nsswitch.write_text("\n".join(lines) + "\n", encoding="utf-8")
     if resolver.is_symlink():
         resolver.unlink()
     resolver.write_text("nameserver 127.0.0.1\noptions attempts:1 timeout:1\n", encoding="ascii")
+
+
+def _start_loopback_sinkhole(plan: dict, environment: dict[str, str]) -> None:
+    if plan["execution"]["network_policy"] != "loopback-sinkhole":
+        return
+    _use_direct_loopback_dns()
     response = plan["execution"]["containment"]["sinkhole_http_response"]
     tls_context = None
     if response is not None:

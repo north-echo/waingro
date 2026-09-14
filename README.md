@@ -138,9 +138,22 @@ bounded.
 reports both transfer and execution as unauthorized. The controls cover benign
 and negative behavior, sinkhole DNS/HTTPS, inert command interception, timeout,
 output limiting, resource-policy rejection, missing capabilities, plan/image
-tampering, trace trust, before/after posture, and guest cleanup. The catalog has
-not been run on hanna2, and no corpus candidate has been transferred or
-executed.
+tampering, trace trust, before/after posture, and guest cleanup. The full suite
+passed on the dedicated hanna2 host on September 14, 2026. No corpus candidate
+was transferred or executed; see the
+[hanna2 control-validation report](research/hanna2-control-validation-2026-09-14.md).
+
+The dedicated hanna2 lab now uses a clean Fedora Server 44 installation with
+the prior data/backup disk physically disconnected, SELinux enforcing, a
+management-only inbound firewall, key-only SSH, separate no-exec work and image
+filesystems, and a digest-pinned Fedora 44 KVM base image. Host egress activation
+uses a per-boot 120-second rollback timer: the containment marker is not trusted
+until the operator reconnects and explicitly commits it. Preflight also rejects
+a world-accessible KVM device, a missing IOMMU, or a lockdown marker that has
+not been committed; host provisioning separately rejects audit task
+suppression. Pending firmware updates and Secure Boot remain blocking gates;
+repeat the complete benign suite after both changes before any corpus
+execution.
 
 ## Detection Coverage
 
@@ -380,9 +393,10 @@ malicious attribution. See the
 
 WAINGRO 0.11.0 implements the generic containment profile and non-authorizing
 benign control catalog needed for the next safety gate. This is preparation,
-not candidate evidence: hanna2 now has a verified pre-rebuild backup and
-temporary-LV restore drill, but its backup disk is not yet disconnected, the
-clean rebuild has not begun, and ClawGrid execution remains blocked. See the
+not candidate evidence: hanna2 has been rebuilt as a dedicated Fedora Server 44
+KVM host and its former data disk is physically disconnected. Candidate
+execution remains blocked until firmware and Secure Boot gates are complete and
+the benign controls pass again afterward. See the
 [containment readiness report](research/containment-readiness-2026-09-12.md).
 
 ## Threat-intelligence model
@@ -425,6 +439,8 @@ not promoted to an attack verdict.
   — generalized remote-authority detection and the fail-closed ClawGrid case
 - [September 2026 containment readiness](research/containment-readiness-2026-09-12.md)
   — generic isolated-response controls, benign fixtures, and remaining hanna2 gates
+- [September 2026 hanna2 control validation](research/hanna2-control-validation-2026-09-14.md)
+  — dedicated-host hardening, KVM fixture results, fail-closed rejections, and remaining gates
 - [ClawHub Ecosystem Security Audit](research/clawhub-audit/) — March 2026 audit of 30,037 skills
 - MCP Ecosystem Security Scan — March 2026 scan of 1,139 MCP servers (paper forthcoming)
 

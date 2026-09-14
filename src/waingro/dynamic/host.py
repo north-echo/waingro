@@ -184,6 +184,7 @@ def _secure_marker(path: Path, policy_sha256: str) -> bool:
         isinstance(marker, dict)
         and marker.get("schema_version") == "1.0"
         and marker.get("locked") is True
+        and marker.get("committed") is True
         and marker.get("policy_sha256") == policy_sha256
         and marker.get("boot_id") == boot_id
     )
@@ -216,14 +217,37 @@ def inspect_host_posture(
     checks["no_admin_groups"] = {"ok": not elevated, "observed": elevated}
 
     kvm = Path("/dev/kvm")
-    checks["kvm"] = {
-        "ok": (
-            kvm.exists()
-            and stat.S_ISCHR(kvm.stat().st_mode)
+    try:
+        kvm_info = kvm.stat()
+        kvm_group = grp.getgrnam("kvm").gr_gid
+        kvm_mode = stat.S_IMODE(kvm_info.st_mode)
+        kvm_ok = (
+            stat.S_ISCHR(kvm_info.st_mode)
+            and kvm_info.st_uid == 0
+            and kvm_info.st_gid == kvm_group
+            and kvm_mode & stat.S_IRWXO == 0
             and os.access(kvm, os.R_OK | os.W_OK)
-        ),
-        "observed": str(kvm),
-    }
+        )
+        kvm_observed: object = {
+            "path": str(kvm),
+            "uid": kvm_info.st_uid,
+            "gid": kvm_info.st_gid,
+            "mode": oct(kvm_mode),
+        }
+    except (KeyError, OSError) as exc:
+        kvm_ok = False
+        kvm_observed = str(exc)
+    checks["kvm"] = {"ok": kvm_ok, "observed": kvm_observed}
+
+    iommu_root = Path("/sys/kernel/iommu_groups")
+    try:
+        iommu_groups = sorted(item.name for item in iommu_root.iterdir() if item.is_dir())
+    except OSError as exc:
+        iommu_groups = []
+        iommu_observed: object = str(exc)
+    else:
+        iommu_observed = iommu_groups[:20]
+    checks["iommu"] = {"ok": bool(iommu_groups), "observed": iommu_observed}
     enforce = Path("/sys/fs/selinux/enforce")
     selinux = enforce.read_text(encoding="ascii").strip() if enforce.is_file() else None
     checks["selinux_enforcing"] = {"ok": selinux == "1", "observed": selinux}

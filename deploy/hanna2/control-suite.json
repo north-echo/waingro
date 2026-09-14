@@ -35,7 +35,7 @@
       "id": "network-sinkhole",
       "stage": "guest",
       "fixture": "control-fixtures/network-sinkhole",
-      "fixture_sha256": "46cf17bae488796bce25729f1c08356d2e449da219ff9ed68f5fea1633dad6aa",
+      "fixture_sha256": "9bd7adc1860f7c6e6e829d2abcf2ebcd5cef82dbd519a3b6430f6d808a4864b9",
       "expected": "exit-0",
       "execution_authorized": false
     },
@@ -121,8 +121,8 @@
     }
   ],
   "blockers": [
-    "The suite has not been transferred to or executed on a rebuilt hanna2 host.",
-    "The verified backup disk has not been physically disconnected from hanna2.",
-    "The hanna2 base image and host policy have not been frozen and digest-pinned for this suite."
+    "Required hanna2 UEFI key and revocation-database firmware updates remain pending.",
+    "Secure Boot remains disabled on hanna2.",
+    "No corpus campaign policy or artifact allowlist has been authorized."
   ]
 }

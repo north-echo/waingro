@@ -47,12 +47,21 @@ execute a skill, and a high-priority queue item is not evidence of malware.
 6. Configure a management-only firewall path, apply all updates, then disable
    host egress for the campaign.
 7. Install WAINGRO and run `prepare-host.sh`. The initial policy permits
-   fixtures only and contains an empty corpus artifact allowlist.
+   fixtures only and contains an empty corpus artifact allowlist. The script
+   arms egress lockdown with a 120-second rollback. Reconnect through the
+   management-only SSH rule and run `sudo waingro-egress-lockdown commit`;
+   host posture remains untrusted until this per-boot commit succeeds. The
+   rollback timer is also armed automatically at boot, so an uncommitted or
+   management-breaking ruleset removes itself instead of becoming persistent.
+   The policy and boot marker remain root-owned and non-writable by the runner,
+   but are group-readable so the unprivileged preflight can validate them.
 
 ## Phase 3: containment validation
 
 1. Confirm that `waingro dynamic preflight` passes as the dedicated
-   `waingro-runner` account.
+   `waingro-runner` account. Preflight must reject a world-accessible KVM
+   device, missing IOMMU groups, or an uncommitted egress marker. Host
+   provisioning must separately reject audit task suppression.
 2. Run benign, positive, timeout, fork/resource, output-volume, DNS, HTTP, TLS,
    missing-executable, tampered-plan, tampered-image, and post-run posture
    controls.
@@ -72,6 +81,10 @@ execute a skill, and a high-priority queue item is not evidence of malware.
    executable with the planned name. Only then install the root-owned no-op
    shim. An intercepted `openclaw cron` or `crontab` invocation must produce
    telemetry and no scheduling or agent side effect.
+8. Confirm the explicit qcow2 backing-store source is marked non-relabelable in
+   the libvirt XML. The writable overlay remains dynamically labeled, while the
+   digest-pinned base image must remain root-owned and byte-identical after
+   every guest.
 
 The packaged control catalog remains explicitly unauthorized. Each guest
 fixture needs its own separately reviewed fixture plan, exact entrypoint,

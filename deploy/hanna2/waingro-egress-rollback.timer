@@ -1,0 +1,7 @@
+[Unit]
+Description=Rollback uncommitted WAINGRO host egress lockdown after 120 seconds
+
+[Timer]
+OnActiveSec=120s
+AccuracySec=1s
+Unit=waingro-egress-rollback.service

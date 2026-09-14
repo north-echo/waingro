@@ -6,6 +6,7 @@ import json
 import os
 import socket
 import ssl
+import stat
 import subprocess
 import threading
 from pathlib import Path
@@ -14,7 +15,11 @@ from types import SimpleNamespace
 import pytest
 
 from waingro.dynamic import guest_agent_payload
-from waingro.dynamic.guest_agent_payload import _connect_event_type, _dns_name
+from waingro.dynamic.guest_agent_payload import (
+    _connect_event_type,
+    _dns_name,
+    _use_direct_loopback_dns,
+)
 from waingro.dynamic.host import HostPolicy
 from waingro.dynamic.plan import build_dynamic_plan, dynamic_job_id, write_plan
 from waingro.dynamic.runner import (
@@ -531,6 +536,7 @@ def test_runner_plan_loader_and_domain_xml_have_no_host_share_or_default_network
         loaded,
         tmp_path / "overlay.qcow2",
         tmp_path / "input.iso",
+        tmp_path / "waingro-base.qcow2",
     ).decode()
 
     assert 'type="kvm"' in xml
@@ -543,6 +549,10 @@ def test_runner_plan_loader_and_domain_xml_have_no_host_share_or_default_network
     assert 'device="cdrom"' not in xml
     assert 'dev="vdb" bus="virtio"' in xml
     assert 'model="none"' in xml
+    assert '<backingStore type="file">' in xml
+    assert f'file="{tmp_path / "waingro-base.qcow2"}"' in xml
+    assert '<seclabel model="selinux" relabel="no"' in xml
+    assert '<seclabel model="dac" relabel="no"' in xml
     assert "qemu:commandline" in xml
     assert "elevateprivileges=deny" in xml
 
@@ -639,6 +649,32 @@ def test_loopback_sinkhole_dns_parser_extracts_only_a_bounded_query():
 
     assert _dns_name(query) == ("example.com", 1, len(query))
     assert _dns_name(b"short") is None
+
+
+def test_loopback_sinkhole_forces_direct_guest_dns(tmp_path):
+    nsswitch = tmp_path / "nsswitch.conf"
+    resolver = tmp_path / "resolv.conf"
+    nsswitch.write_text(
+        "passwd: files\nhosts: myhostname resolve [!UNAVAIL=return] files dns\n",
+        encoding="utf-8",
+    )
+    resolver.write_text("nameserver 192.0.2.1\n", encoding="ascii")
+
+    _use_direct_loopback_dns(nsswitch, resolver)
+
+    assert "hosts: files dns\n" in nsswitch.read_text(encoding="utf-8")
+    assert resolver.read_text(encoding="ascii") == (
+        "nameserver 127.0.0.1\noptions attempts:1 timeout:1\n"
+    )
+
+
+def test_loopback_sinkhole_rejects_ambiguous_guest_dns_policy(tmp_path):
+    nsswitch = tmp_path / "nsswitch.conf"
+    resolver = tmp_path / "resolv.conf"
+    nsswitch.write_text("hosts: files\nhosts: dns\n", encoding="utf-8")
+
+    with pytest.raises(RuntimeError, match="unavailable or ambiguous"):
+        _use_direct_loopback_dns(nsswitch, resolver)
 
 
 def test_dynamic_plan_binds_containment_profile_bytes_and_controls():
@@ -831,7 +867,11 @@ def test_fixed_response_https_sinkhole_is_local_and_route_exact(tmp_path):
         "size_bytes": len(body),
         "body_base64": base64.b64encode(body).decode("ascii"),
     }
-    tls_context, certificate = guest_agent_payload._create_tls_context(host, tmp_path / "tls")
+    tls_dir = tmp_path / "tls"
+    tls_context, certificate = guest_agent_payload._create_tls_context(host, tls_dir)
+    assert stat.S_IMODE(tls_dir.stat().st_mode) == 0o711
+    assert stat.S_IMODE((tls_dir / "server.key").stat().st_mode) == 0o400
+    assert stat.S_IMODE(certificate.stat().st_mode) == 0o444
     server_socket, client_socket = socket.socketpair()
 
     class OneConnectionServer:

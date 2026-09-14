@@ -601,7 +601,12 @@ def _write_input_tree(stage: Path, plan_path: Path, candidate: Path, plan: dict)
     )
 
 
-def _build_domain_xml(plan: dict, overlay: Path, input_iso: Path) -> bytes:
+def _build_domain_xml(
+    plan: dict,
+    overlay: Path,
+    input_iso: Path,
+    base_image: Path,
+) -> bytes:
     execution = plan["execution"]
     domain = ET.Element("domain", {"type": "kvm"})
     ET.SubElement(domain, "name").text = plan["job_id"]
@@ -631,6 +636,16 @@ def _build_domain_xml(plan: dict, overlay: Path, input_iso: Path) -> bytes:
     disk = ET.SubElement(devices, "disk", {"type": "file", "device": "disk"})
     ET.SubElement(disk, "driver", {"name": "qemu", "type": "qcow2", "cache": "none"})
     ET.SubElement(disk, "source", {"file": str(overlay)})
+    backing = ET.SubElement(disk, "backingStore", {"type": "file"})
+    ET.SubElement(backing, "format", {"type": "qcow2"})
+    backing_source = ET.SubElement(backing, "source", {"file": str(base_image)})
+    for security_model in ("selinux", "dac"):
+        ET.SubElement(
+            backing_source,
+            "seclabel",
+            {"model": security_model, "relabel": "no"},
+        )
+    ET.SubElement(backing, "backingStore")
     ET.SubElement(disk, "target", {"dev": "vda", "bus": "virtio"})
     input_disk = ET.SubElement(devices, "disk", {"type": "file", "device": "disk"})
     ET.SubElement(input_disk, "driver", {"name": "qemu", "type": "raw", "cache": "none"})
@@ -805,7 +820,7 @@ def run_dynamic_job(
             ],
             timeout=30,
         )
-        domain_xml.write_bytes(_build_domain_xml(plan, overlay, input_iso))
+        domain_xml.write_bytes(_build_domain_xml(plan, overlay, input_iso, base_image))
         console_process = None
         console_output = None
         console_master = None

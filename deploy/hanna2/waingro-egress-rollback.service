@@ -1,0 +1,6 @@
+[Unit]
+Description=Rollback uncommitted WAINGRO host egress lockdown
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/systemctl stop waingro-egress-lockdown.service

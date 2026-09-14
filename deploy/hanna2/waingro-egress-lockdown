@@ -5,6 +5,28 @@ POLICY=/etc/waingro/host-policy.json
 RULESET=/etc/waingro/egress-lockdown.nft
 RUNTIME_DIR=/run/waingro
 MARKER=${RUNTIME_DIR}/egress-locked
+ROLLBACK_UNIT=waingro-egress-rollback
+RUNNER_GROUP=waingro-runner
+
+write_marker() {
+    committed=$1
+    /usr/bin/getent group "${RUNNER_GROUP}" >/dev/null
+    /usr/bin/install -d -o root -g "${RUNNER_GROUP}" -m 0750 "${RUNTIME_DIR}"
+    policy_sha=$(/usr/bin/sha256sum "${POLICY}" | /usr/bin/cut -d ' ' -f 1)
+    boot_id=$(/usr/bin/tr -d '\n' </proc/sys/kernel/random/boot_id)
+    temporary=$(/usr/bin/mktemp "${RUNTIME_DIR}/egress-locked.XXXXXX")
+    /usr/bin/printf \
+        '{"schema_version":"1.0","locked":true,"committed":%s,"policy_sha256":"%s","boot_id":"%s"}\n' \
+        "${committed}" "${policy_sha}" "${boot_id}" >"${temporary}"
+    /usr/bin/chown root:"${RUNNER_GROUP}" "${temporary}"
+    /usr/bin/chmod 0640 "${temporary}"
+    /usr/bin/mv -f "${temporary}" "${MARKER}"
+}
+
+if [[ ${EUID} -ne 0 ]]; then
+    /usr/bin/printf 'waingro-egress-lockdown must run as root\n' >&2
+    exit 77
+fi
 
 case "${1:-}" in
     start)
@@ -12,28 +34,34 @@ case "${1:-}" in
         test -r "${POLICY}"
         test -r "${RULESET}"
         /usr/sbin/nft delete table inet waingro_lockdown 2>/dev/null || true
+        /usr/sbin/nft --check -f "${RULESET}"
         /usr/sbin/nft -f "${RULESET}"
-        /usr/bin/install -d -o root -g root -m 0700 "${RUNTIME_DIR}"
-        policy_sha=$(/usr/bin/sha256sum "${POLICY}" | /usr/bin/cut -d ' ' -f 1)
-        boot_id=$(/usr/bin/tr -d '\n' </proc/sys/kernel/random/boot_id)
-        temporary=$(/usr/bin/mktemp "${RUNTIME_DIR}/egress-locked.XXXXXX")
-        /usr/bin/printf \
-            '{"schema_version":"1.0","locked":true,"policy_sha256":"%s","boot_id":"%s"}\n' \
-            "${policy_sha}" "${boot_id}" >"${temporary}"
-        /usr/bin/chown root:root "${temporary}"
-        /usr/bin/chmod 0600 "${temporary}"
-        /usr/bin/mv -f "${temporary}" "${MARKER}"
+        write_marker false
         ;;
     stop)
         /usr/bin/rm -f "${MARKER}"
         /usr/sbin/nft delete table inet waingro_lockdown 2>/dev/null || true
+        ;;
+    arm)
+        /usr/bin/systemctl restart waingro-egress-lockdown.service
+        /usr/bin/printf 'egress lockdown active; automatic rollback armed for 120 seconds\n'
+        ;;
+    commit)
+        test -f "${MARKER}"
+        /usr/bin/systemctl is-active --quiet "${ROLLBACK_UNIT}.timer"
+        /usr/bin/systemctl stop "${ROLLBACK_UNIT}.timer"
+        /usr/bin/systemctl stop "${ROLLBACK_UNIT}.service" 2>/dev/null || true
+        /usr/bin/systemctl is-active --quiet waingro-egress-lockdown.service
+        /usr/sbin/nft list table inet waingro_lockdown >/dev/null
+        write_marker true
+        /usr/bin/printf 'egress lockdown committed for this boot\n'
         ;;
     status)
         test -f "${MARKER}"
         /usr/sbin/nft list table inet waingro_lockdown >/dev/null
         ;;
     *)
-        /usr/bin/printf 'usage: %s {start|stop|status}\n' "$0" >&2
+        /usr/bin/printf 'usage: %s {start|stop|arm|commit|status}\n' "$0" >&2
         exit 64
         ;;
 esac

@@ -8,6 +8,7 @@ Requires=firewalld.service
 Type=oneshot
 RemainAfterExit=yes
 ExecStart=/usr/local/libexec/waingro-egress-lockdown start
+ExecStartPost=/usr/bin/systemctl --no-block restart waingro-egress-rollback.timer
 ExecStop=/usr/local/libexec/waingro-egress-lockdown stop
 
 [Install]

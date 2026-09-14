@@ -1,7 +1,15 @@
 table inet waingro_lockdown {
     chain output {
-        type filter hook output priority -200; policy drop;
+        # Run after conntrack has classified reply traffic.  A raw-priority
+        # chain can see SSH SYN-ACK packets before they become established and
+        # lock the management operator out of the host.
+        type filter hook output priority 100; policy drop;
         oifname "lo" accept
         ct state established,related accept
+
+        # Preserve the management-only DHCP lease without permitting general
+        # host egress.  hanna2 is pinned to this LAN and has no guest NICs.
+        oifname "eno1" ip daddr 192.168.4.0/22 udp sport 68 udp dport 67 accept
+        oifname "eno1" ip daddr 255.255.255.255 udp sport 68 udp dport 67 accept
     }
 }
